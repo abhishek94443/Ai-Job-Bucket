@@ -1,0 +1,50 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local logs & data outputs
+*.log
+data/*.json
+
+# Database & local state
+.neon/
+
+# Local reference repositories & scratch data
+reference_ai_job_search/
+scratch/
+.playwright-mcp/
+
+# Internal execution traces and agent files
+docs/live_2_agent_execution_trace.md
+docs/pipeline_architecture_and_ai_integration_plan.md
+frontend/AGENTS.md
+
+# Frontend dependencies & build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.turbo/
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
