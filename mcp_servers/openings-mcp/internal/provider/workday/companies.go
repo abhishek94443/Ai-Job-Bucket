@@ -1,0 +1,90 @@
+package workday
+
+import (
+	_ "embed"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/goccy/go-yaml"
+)
+
+//go:embed companies.yaml
+var companiesYAML []byte
+
+// Company is a confirmed Workday CXS tenant for a public company, drawn from
+// a curated S&P 500 list (internal/provider/workday/companies.yaml). It's
+// keyed by tenant slug (e.g. "3m", "att") rather than display name — tenant
+// slugs are unique*, lowercase, and punctuation-free, unlike display names
+// such as "AT&T" or "Workday, Inc.".
+//
+// *Two harmless exceptions share a tenant across two rows with an identical
+// instance/site (Fox Corporation's two share classes under "fox", News
+// Corp's two share classes under "dowjones") — both rows resolve to the same
+// BaseURL. Lookups keep the first row so the display name matches the one
+// rosters advertise.
+type Company struct {
+	Name     string `yaml:"company" json:"company"`
+	Tenant   string `yaml:"tenant" json:"tenant"`
+	Instance string `yaml:"instance" json:"instance"`
+	Site     string `yaml:"site" json:"site"`
+}
+
+// baseURLTpl formats a Workday CXS API base URL.
+// Parameters: 1: Tenant (e.g. "3m"), 2: Instance (e.g. "wd1"), 3: Tenant (e.g. "3m"), 4: Site (e.g. "Search" or "3M").
+// Example: "https://3m.wd1.myworkdayjobs.com/wday/cxs/3m/Search"
+const baseURLTpl = "https://%s.%s.myworkdayjobs.com/wday/cxs/%s/%s"
+
+// careersURLTpl formats a human-facing Workday career site URL.
+// Parameters: 1: Tenant (e.g. "3m"), 2: Instance (e.g. "wd1"), 3: Site (e.g. "3M").
+// Example: "https://3m.wd1.myworkdayjobs.com/en-US/3M"
+const careersURLTpl = "https://%s.%s.myworkdayjobs.com/en-US/%s"
+
+// BaseURL builds this company's Workday CXS base URL, e.g.
+// https://3m.wd1.myworkdayjobs.com/wday/cxs/3m/Search — the same
+// {tenant}.{instance}.myworkdayjobs.com/wday/cxs/{tenant}/{site} shape
+// documented on PublicSiteURL in path.go.
+func (c Company) BaseURL() string {
+	return fmt.Sprintf(baseURLTpl, c.Tenant, c.Instance, c.Tenant, c.Site)
+}
+
+// CareersURL returns the company's human-facing career site, e.g.
+// https://3m.wd1.myworkdayjobs.com/en-US/3M. The locale segment is
+// mandatory here, unlike BaseURL: [ParseCareersURL] rejects a bare
+// two-letter site path as a locale-only path with no site (see
+// careers_url.go), which a locale-less URL would trip for a site as short
+// as Johnson & Johnson's "JJ".
+func (c Company) CareersURL() string {
+	return fmt.Sprintf(careersURLTpl, c.Tenant, c.Instance, c.Site)
+}
+
+// Companies holds every confirmed Workday tenant, sorted by company name.
+var Companies = mustLoadCompanies()
+
+// CompaniesByTenant looks up a confirmed tenant by slug. Keys are
+// lowercased, so callers must lowercase their input before indexing.
+var CompaniesByTenant = buildTenantIndex(Companies)
+
+// mustLoadCompanies parses the embedded companies.yaml. A parse failure is a
+// build-time bug in a file this package owns, not a runtime condition to
+// recover from.
+func mustLoadCompanies() []Company {
+	var cs []Company
+	if err := yaml.Unmarshal(companiesYAML, &cs); err != nil {
+		panic(fmt.Sprintf("workday: parse companies.yaml: %v", err))
+	}
+	slices.SortFunc(cs, func(a, b Company) int { return strings.Compare(a.Name, b.Name) })
+	return cs
+}
+
+func buildTenantIndex(cs []Company) map[string]Company {
+	m := make(map[string]Company, len(cs))
+	for _, c := range cs {
+		slug := strings.ToLower(c.Tenant)
+		if _, ok := m[slug]; ok {
+			continue
+		}
+		m[slug] = c
+	}
+	return m
+}

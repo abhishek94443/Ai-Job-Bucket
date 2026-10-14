@@ -1,0 +1,205 @@
+package ats
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/amikai/openings-mcp/internal/provider/ashby"
+)
+
+// AshbyAdapter serves Ashby-hosted companies. Ashby's public API is a
+// single full-board endpoint — no server-side search and no per-job
+// endpoint (returns 401) — so Search filters the dump via searchDump and
+// Detail scans the same dump. When the process-local dump cache is enabled,
+// Search/Filters/Detail for one board share a single upstream fetch.
+type AshbyAdapter struct {
+	client    *ashby.Client
+	dumpCache *DumpCache
+}
+
+var _ Adapter = (*AshbyAdapter)(nil)
+
+// ashbyCareersURLRE matches Ashby board URLs and captures the organization
+// slug (first path segment; URL-decoded — org names may contain spaces).
+//
+// Examples (hostname + escaped path):
+//   - jobs.ashbyhq.com/acme
+//   - jobs.ashbyhq.com/Acme%20Inc
+//   - jobs.ashbyhq.com/acme/application/job-id
+var ashbyCareersURLRE = regexp.MustCompile(
+	`(?i)^jobs\.ashbyhq\.com/(?P<slug>[^/]+)`,
+)
+
+func NewAshbyAdapter(baseURL string, hc *http.Client, dumpCache *DumpCache) (*AshbyAdapter, error) {
+	c, err := ashby.NewClient(baseURL, ashby.WithClient(hc))
+	if err != nil {
+		return nil, err
+	}
+	return &AshbyAdapter{client: c, dumpCache: dumpCache}, nil
+}
+
+func (a *AshbyAdapter) Name() string { return "ashby" }
+
+func (a *AshbyAdapter) Roster() []CompanyInfo {
+	infos := make([]CompanyInfo, 0, len(ashby.Companies))
+	for _, c := range ashby.Companies {
+		infos = append(infos, CompanyInfo{Slug: c.Board, Name: c.Name})
+	}
+	return infos
+}
+
+// ParseCareersURL recognizes Ashby-hosted board URLs; the first path
+// segment is the organization name, which is already this adapter's slug
+// form (URL-decoded — Ashby org names may contain spaces).
+func (a *AshbyAdapter) ParseCareersURL(u *url.URL) (string, bool) {
+	return matchCareersSlug(ashbyCareersURLRE, u)
+}
+
+// CareersURL renders the roster company's public job board page.
+func (a *AshbyAdapter) CareersURL(slug string) (string, bool) {
+	c, ok := ashby.CompaniesByBoard[strings.ToLower(slug)]
+	if !ok {
+		return "", false
+	}
+	return c.CareersURL(), true
+}
+
+func (a *AshbyAdapter) Search(ctx context.Context, slug string, p SearchParams) (*SearchResult, error) {
+	jobs, err := a.dump(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	return searchDump(jobs, p)
+}
+
+func (a *AshbyAdapter) Filters(ctx context.Context, slug string) (FilterSet, error) {
+	jobs, err := a.dump(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	return distinctFilters(jobs), nil
+}
+
+func (a *AshbyAdapter) Detail(ctx context.Context, slug, jobID string) (*JobDetail, error) {
+	// Route through dump so Search → Detail reuses the process-local dump
+	// cache instead of re-fetching the board. Ashby has no public per-job API.
+	jobs, err := a.dump(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	for _, j := range jobs {
+		if j.summary.JobID != jobID {
+			continue
+		}
+		loc := j.summary.Location
+		if j.locations != "" {
+			loc = j.locations
+		}
+		return &JobDetail{
+			JobID:       j.summary.JobID,
+			Title:       j.summary.Title,
+			Company:     cmp.Or(ashby.CompaniesByBoard[strings.ToLower(slug)].Name, slug),
+			Location:    loc,
+			PostedAt:    j.summary.PostedAt,
+			URL:         j.summary.URL,
+			Description: j.description,
+		}, nil
+	}
+	return nil, fmt.Errorf("ashby: job %q not found for company %q; pass a job_id exactly as returned by the job search", jobID, slug)
+}
+
+// board fetches the full job board, unwrapping ogen's union response.
+func (a *AshbyAdapter) board(ctx context.Context, slug string) (*ashby.JobBoardResponse, error) {
+	res, err := a.client.GetJobBoard(ctx, ashby.GetJobBoardParams{JobBoardName: slug})
+	if err != nil {
+		return nil, fmt.Errorf("ashby: fetch board %q: %w", slug, err)
+	}
+	switch r := res.(type) {
+	case *ashby.JobBoardResponse:
+		return r, nil
+	case *ashby.GetJobBoardNotFound:
+		return nil, fmt.Errorf("ashby: board %q not found upstream", slug)
+	default:
+		return nil, fmt.Errorf("ashby: unexpected response type %T", res)
+	}
+}
+
+// dump returns a full-board intermediate dump, reusing the process-local
+// dump cache when enabled.
+func (a *AshbyAdapter) dump(ctx context.Context, slug string) ([]dumpJob, error) {
+	jobs, _, err := a.dumpCache.getOrLoadDump(ctx, a.Name(), slug, func(ctx context.Context) ([]dumpJob, any, error) {
+		jobs, err := a.fetchDump(ctx, slug)
+		return jobs, nil, err
+	})
+	return jobs, err
+}
+
+// fetchDump loads the board and reshapes listed jobs for the filter engine.
+func (a *AshbyAdapter) fetchDump(ctx context.Context, slug string) ([]dumpJob, error) {
+	board, err := a.board(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	jobs := make([]dumpJob, 0, len(board.Jobs))
+	for _, j := range board.Jobs {
+		if !j.IsListed.Value {
+			continue
+		}
+		fields := make(map[string][]string)
+		if j.Department.Value != "" {
+			fields["department"] = []string{j.Department.Value}
+		}
+		if j.Team.Value != "" {
+			fields["team"] = []string{j.Team.Value}
+		}
+		if string(j.EmploymentType.Value) != "" {
+			fields["employmentType"] = []string{string(j.EmploymentType.Value)}
+		}
+		// Real boards send null for workplaceType/isRemote (see provider
+		// fixture board_nulls_rsp.json); treat null as unspecified.
+		if wt, ok := j.WorkplaceType.Get(); ok && string(wt) != "" {
+			fields["workplaceType"] = []string{string(wt)}
+		}
+		jobs = append(jobs, dumpJob{
+			summary: JobSummary{
+				JobID:    j.ID.Value,
+				Title:    j.Title.Value,
+				Location: j.Location.Value,
+				PostedAt: ashbyPostedAt(j.PublishedAt),
+				URL:      j.JobUrl.Value,
+			},
+			sortKey:     j.PublishedAt.Value,
+			orgUnit:     j.Department.Value + " " + j.Team.Value,
+			description: j.DescriptionPlain.Value,
+			locations:   ashbyLocations(&j),
+			fields:      fields,
+			isRemote:    j.IsRemote.Or(false),
+		})
+	}
+	return jobs, nil
+}
+
+// ashbyPostedAt guards against a present-but-null publishedAt: NilDateTime's
+// zero Value would otherwise format as a fake date instead of the true
+// "unknown" state.
+func ashbyPostedAt(t ashby.NilDateTime) string {
+	v, ok := t.Get()
+	if !ok {
+		return ""
+	}
+	return isoDate(v)
+}
+
+func ashbyLocations(j *ashby.JobPosting) string {
+	parts := make([]string, 0, 1+len(j.SecondaryLocations))
+	parts = append(parts, j.Location.Value)
+	for _, s := range j.SecondaryLocations {
+		parts = append(parts, s.Location.Value)
+	}
+	return strings.Join(parts, "; ")
+}

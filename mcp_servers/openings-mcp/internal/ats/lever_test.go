@@ -1,0 +1,129 @@
+package ats
+
+import (
+	"net/http"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/amikai/openings-mcp/internal/provider/lever"
+)
+
+func testLeverAdapter(t *testing.T) *LeverAdapter {
+	t.Helper()
+	srv := lever.NewMockServer()
+	t.Cleanup(srv.Close)
+	a, err := NewLeverAdapter(srv.URL, &http.Client{Timeout: 5 * time.Second}, nil)
+	require.NoError(t, err)
+	return a
+}
+
+func TestLeverRoster(t *testing.T) {
+	a := testLeverAdapter(t)
+	roster := a.Roster()
+	require.Len(t, roster, len(lever.Companies))
+	for _, c := range roster {
+		assert.NotEmptyf(t, c.Slug, "roster entry with empty field: %+v", c)
+		assert.NotEmptyf(t, c.Name, "roster entry with empty field: %+v", c)
+	}
+}
+
+func TestLeverSearchAll(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{})
+	require.NoError(t, err)
+	require.Equal(t, 3, res.TotalCount)
+	require.Len(t, res.Jobs, 3)
+	for _, j := range res.Jobs {
+		assert.NotEmptyf(t, j.JobID, "summary with empty field: %+v", j)
+		assert.NotEmptyf(t, j.Title, "summary with empty field: %+v", j)
+		assert.NotEmptyf(t, j.URL, "summary with empty field: %+v", j)
+		assert.NotEmptyf(t, j.PostedAt, "summary with empty field: %+v", j)
+	}
+}
+
+func TestLeverSearchQuery(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{Query: "AbelsonTaylor"})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Jobs)
+	assert.Equal(t, "AbelsonTaylor Writer", res.Jobs[0].Title, "want AbelsonTaylor Writer first")
+}
+
+func TestLeverSearchQueryMatchesListContent(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{Query: "strikethrough"})
+	require.NoError(t, err)
+	require.Len(t, res.Jobs, 1)
+	assert.Equal(t, "AbelsonTaylor Writer", res.Jobs[0].Title)
+}
+
+func TestLeverSearchQueryMatchesAdditionalContent(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{Query: "never find a job better"})
+	require.NoError(t, err)
+	require.Len(t, res.Jobs, 1)
+	assert.Equal(t, "AbelsonTaylor Writer", res.Jobs[0].Title)
+}
+
+func TestLeverSearchFilters(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{
+		Filters: map[string][]string{"team": {"Professional Services"}},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, res.Jobs, "want at least one Professional Services job")
+}
+
+func TestLeverFilters(t *testing.T) {
+	a := testLeverAdapter(t)
+	fs, err := a.Filters(t.Context(), "leverdemo")
+	require.NoError(t, err)
+	assert.True(t, slices.Contains(fs["team"], "Professional Services"), `fs["team"] = %v, want it to contain "Professional Services"`, fs["team"])
+	assert.True(t, slices.Contains(fs["department"], "Sales"), `fs["department"] = %v, want it to contain "Sales"`, fs["department"])
+}
+
+func TestLeverSearchFilterDepartment(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "leverdemo", SearchParams{
+		Filters: map[string][]string{"department": {"Sales"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.TotalCount, "both Account Executive postings sit in Sales")
+}
+
+func TestLeverDetail(t *testing.T) {
+	a := testLeverAdapter(t)
+	d, err := a.Detail(t.Context(), "leverdemo", "33538a2f-d27d-4a96-8f05-fa4b0e4d940e")
+	require.NoError(t, err)
+	assert.Equal(t, "AbelsonTaylor Writer", d.Title)
+	assert.Contains(t, d.Description, "Welcome to the Demo", "Description should contain the fixture opening")
+	assert.NotContains(t, d.Description, "<", "Description should be plain text")
+}
+
+func TestLeverDetailNotFound(t *testing.T) {
+	a := testLeverAdapter(t)
+	_, err := a.Detail(t.Context(), "leverdemo", lever.MockNotFoundPostingID)
+	assert.Error(t, err, "want error for unknown posting id")
+}
+
+func TestLeverDetailCompanyFallsBackToSlug(t *testing.T) {
+	a := testLeverAdapter(t)
+	res, err := a.Search(t.Context(), "somestartup", SearchParams{})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Jobs)
+	d, err := a.Detail(t.Context(), "somestartup", res.Jobs[0].JobID)
+	require.NoError(t, err)
+	assert.Equal(t, "somestartup", d.Company, "non-roster slug should be used as company name")
+}
+
+// TestLeverPostedAtNull guards a present-but-explicitly-null createdAt:
+// OptNilInt64's zero Value (epoch 0) must not be formatted as a fake
+// "1970-01-01" date.
+func TestLeverPostedAtNull(t *testing.T) {
+	assert.Empty(t, leverPostedAt(&lever.Posting{CreatedAt: lever.OptNilInt64{Set: true, Null: true}}))
+	assert.Equal(t, "2026-05-01", leverPostedAt(&lever.Posting{CreatedAt: lever.NewOptNilInt64(time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).UnixMilli())}))
+}

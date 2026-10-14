@@ -1,0 +1,445 @@
+openapi: 3.1.0
+
+info:
+  title: Eightfold PCSX Career Site API
+  version: "1"
+  description: >
+    Eightfold has no public developer documentation for its career-site
+    search API (apidocs.eightfold.ai covers the authenticated enterprise
+    ATS/HRIS integration APIs, not this one). This spec is hand-derived
+    from live traffic captured on morganstanley.eightfold.ai on 2026-07-14
+    by driving the site in a browser and reading the network requests it
+    fired, then replaying and varying those requests directly.
+
+    Every Eightfold-hosted career site (`<tenant>.eightfold.ai`) exposes
+    the same unauthenticated `/api/pcsx/*` endpoints; `domain` identifies
+    the tenant's registered company domain (e.g. `morganstanley.com`) and
+    must match exactly, or the server responds with the site's HTML shell
+    instead of JSON.
+
+    Only the two endpoints this client uses are modeled: `search` (list,
+    paginated, server-side query/location/facet filtering) and
+    `position_details` (single posting, full description). Eightfold also
+    calls `match_details`, `position_insights`, `overrides`, and
+    `similar_positions` when a posting page loads, but nothing here reads
+    them.
+
+    ## Filter facets are dynamic per tenant, not part of this spec
+
+    `search`'s facet filters (seen on Morgan Stanley as `businessarea`,
+    `employmenttype`, `city`) are applied via query parameters named
+    `filter_<facetName>=<value>` (repeatable for OR semantics), e.g.
+    `filter_businessarea=technology&filter_businessarea=finance`. The set
+    of valid facet names and values is tenant-specific and discovered at
+    runtime from `data.filterDef.smartFilters` and `data.filterDef.allFilters`
+    in an unfiltered search response — OpenAPI has no way to express a
+    dynamically-named query parameter, so `filter_*` application is handled
+    by hand in the Go adapter (`internal/ats`) rather than through the
+    generated client.
+
+    ## v2: the other public search API
+
+    A meaningful share of tenants (observed: Vale, Bayer, HSBC, and others)
+    return `{"message": "PCSX is not enabled for this user."}` (HTTP 403)
+    from every `/api/pcsx/*` call — that tenant's postings are served
+    exclusively through a separate, newer, also-unauthenticated API instead:
+    `/api/apply/v2/jobs`. Modeled here (tag `v2`) from live traffic captured
+    on vale.eightfold.ai on 2026-07-14. The adapter tries PCSX first and
+    falls back to v2 only on that specific 403.
+
+servers:
+  - url: https://example.eightfold.ai
+    description: Per-tenant career site template; the actual host is <tenant>.eightfold.ai.
+
+tags:
+  - name: pcsx
+    description: Public career-site search API
+  - name: v2
+    description: >
+      Newer public career-site API some tenants use instead of pcsx (same
+      unauthenticated, per-tenant-subdomain, `domain`-scoped model).
+
+paths:
+  /api/pcsx/search:
+    get:
+      operationId: search
+      tags: [pcsx]
+      summary: List job postings for one tenant, with server-side search and pagination.
+      parameters:
+        - name: domain
+          in: query
+          required: true
+          description: The tenant's registered company domain, e.g. `morganstanley.com`.
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Free-text keyword search across title and description.
+          schema:
+            type: string
+        - name: location
+          in: query
+          description: Free-text fuzzy location match.
+          schema:
+            type: string
+        - name: start
+          in: query
+          description: Zero-based result offset. The server returns a fixed page of 10.
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  /api/pcsx/position_details:
+    get:
+      operationId: positionDetails
+      tags: [pcsx]
+      summary: Fetch one posting's full detail, including its HTML description.
+      parameters:
+        - name: position_id
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: domain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: hl
+          in: query
+          description: Response language.
+          schema:
+            type: string
+            default: en
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionDetailsResponse"
+        "404":
+          description: >
+            Unknown position_id. Body carries the same envelope shape as a
+            success response, with an empty `data` object and
+            `error.message` set (observed: "Position not found").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionNotFoundResponse"
+
+  /api/apply/v2/jobs:
+    get:
+      operationId: searchV2
+      tags: [v2]
+      summary: List job postings for one tenant (v2 API), with server-side search and pagination.
+      parameters:
+        - name: domain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Free-text keyword search across title and description.
+          schema:
+            type: string
+        - name: location
+          in: query
+          description: Free-text fuzzy location match.
+          schema:
+            type: string
+        - name: start
+          in: query
+          description: Zero-based result offset. The server returns a fixed page of 10.
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2SearchResponse"
+
+  /api/apply/v2/jobs/{id}:
+    get:
+      operationId: positionDetailsV2
+      tags: [v2]
+      summary: Fetch one posting's full detail (v2 API), including its HTML description.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: domain
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2PositionDetail"
+        "404":
+          description: 'Unknown id. Observed body: {"message": "Job with ID <id> not found"}.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/V2ErrorResponse"
+
+components:
+  schemas:
+    Position:
+      type: object
+      required: [id, name, locations, postedTs, positionUrl]
+      description: >
+        displayJobId (the employer's human-facing requisition number, e.g.
+        "JR040530") is deliberately not modeled here even though every
+        tenant sends it — some send it as a JSON number instead of a
+        string, and nothing in the adapter reads it, so declaring it just
+        adds a way to fail decoding a field nobody uses.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Numeric position ID; the value position_details and the /careers/job/{id} URL take.
+        name:
+          type: string
+        locations:
+          type: array
+          items:
+            type: string
+        postedTs:
+          type: number
+          description: >
+            Unix seconds. Typed as number, not integer, because some
+            tenants send unposted/unknown as the float `0.0` rather than
+            an int `0`.
+        department:
+          type: [string, "null"]
+          description: Null observed on some tenants' postings that have no department assigned.
+        workLocationOption:
+          type: string
+          description: 'Observed values: "onsite", "hybrid", "remote".'
+        positionUrl:
+          type: string
+          description: Site-relative posting path, e.g. "/careers/job/549798931483".
+
+    SmartFilterOption:
+      type: object
+      required: [label, value]
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+          description: The value to send back as filter_<filterName>=<value>.
+
+    SmartFilter:
+      type: object
+      required: [filterName, title, options]
+      properties:
+        filterName:
+          type: string
+          description: 'The facet key, used as the filter_<filterName> query parameter name. Tenant-specific — e.g. "businessarea", "employmenttype", "city" on Morgan Stanley.'
+        title:
+          type: string
+          description: Display label for the facet, e.g. "Business Area".
+        options:
+          type: [array, "null"]
+          description: >
+            Null for non-list facets (observed: a "toggle" filter like
+            include_remote, which carries a boolean rather than a value
+            list). The adapter skips any SmartFilter with null options —
+            FilterSet only exposes pick-a-value facets.
+          items:
+            $ref: "#/components/schemas/SmartFilterOption"
+
+    AllFilterOption:
+      type: object
+      required: [label, value]
+      description: >
+        Same intent as SmartFilterOption, but label is deliberately left
+        untyped rather than string: "latlong" facets (observed on Eaton's
+        and Qualcomm's latlong_non_remote, live-verified 2026-07-14) send
+        an integer nearby-postings count as label instead of a name, and a
+        plain `type: string` here would fail to decode the entire search
+        response over one unusable facet. The adapter decodes label
+        permissively and drops any option whose label isn't a JSON string.
+      properties:
+        label: {}
+        value:
+          type: string
+          description: The value to send back as filter_<filterName>=<value>.
+
+    AllFilter:
+      type: object
+      required: [filterName, title, options]
+      properties:
+        filterName:
+          type: string
+          description: Same role as SmartFilter.filterName.
+        title:
+          type: string
+        options:
+          type: [array, "null"]
+          description: Null for non-list facets, mirroring SmartFilter.options.
+          items:
+            $ref: "#/components/schemas/AllFilterOption"
+
+    FilterDef:
+      type: object
+      required: [smartFilters]
+      properties:
+        smartFilters:
+          type: array
+          items:
+            $ref: "#/components/schemas/SmartFilter"
+        allFilters:
+          type: array
+          description: >
+            A second facet list, usually disjoint from smartFilters, that
+            some tenants populate instead of (or alongside) it — e.g.
+            Eaton, Infineon, and Qualcomm return empty smartFilters but a
+            populated allFilters. Not required: tenants that populate
+            smartFilters have been observed omitting it.
+          items:
+            $ref: "#/components/schemas/AllFilter"
+
+    SearchData:
+      type: object
+      required: [positions, count, filterDef]
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+        count:
+          type: integer
+          description: Total matching positions across all pages, not just this page's length.
+        filterDef:
+          $ref: "#/components/schemas/FilterDef"
+
+    SearchResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status:
+          type: integer
+        data:
+          $ref: "#/components/schemas/SearchData"
+
+    PositionDetail:
+      allOf:
+        - $ref: "#/components/schemas/Position"
+        - type: object
+          required: [jobDescription]
+          properties:
+            jobDescription:
+              type: string
+              description: Full posting description as HTML.
+            publicUrl:
+              type: string
+              nullable: true
+              description: >
+                Absolute, human-clickable posting URL. Some tenants send
+                JSON null here; callers should fall back to composing the
+                origin with positionUrl when this is null or empty.
+
+    PositionDetailsResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status:
+          type: integer
+        data:
+          $ref: "#/components/schemas/PositionDetail"
+
+    PositionErrorInfo:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    PositionNotFoundResponse:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          type: integer
+        error:
+          $ref: "#/components/schemas/PositionErrorInfo"
+
+    V2Position:
+      type: object
+      required: [id, name, locations, t_create, canonicalPositionUrl]
+      description: >
+        Deliberately narrower than the raw v2 payload (which also carries
+        posting_name, hot, department, business_unit, t_update, ats_job_id,
+        display_job_id, type, id_locale, stars, medallionProgram,
+        location_flexibility, work_location_option, isPrivate, ...) — only
+        the fields the adapter actually reads are modeled, since v2's field
+        typing is looser per-tenant than pcsx's (e.g. department has been
+        observed both as a string and as null here too).
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        locations:
+          type: array
+          items:
+            type: string
+        t_create:
+          type: integer
+          format: int64
+          description: Unix seconds; the closest v2 analog to pcsx's postedTs.
+        canonicalPositionUrl:
+          type: string
+          description: Absolute posting URL, unlike pcsx's site-relative positionUrl.
+
+    V2SearchResponse:
+      type: object
+      required: [positions, count]
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/V2Position"
+        count:
+          type: integer
+          description: Total matching positions across all pages, not just this page's length.
+
+    V2PositionDetail:
+      allOf:
+        - $ref: "#/components/schemas/V2Position"
+        - type: object
+          required: [job_description]
+          properties:
+            job_description:
+              type: string
+              description: Full posting description as HTML.
+
+    V2ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

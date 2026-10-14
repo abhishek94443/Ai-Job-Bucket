@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        # The runner label encodes os+arch, so tests run natively on all
+        # six supported platforms: linux/macos/windows x amd64/arm64.
+        os:
+          - ubuntu-latest # linux amd64
+          - ubuntu-24.04-arm # linux arm64
+          - macos-latest # macos arm64
+          - macos-15-intel # macos amd64
+          - windows-latest # windows amd64
+          - windows-11-arm # windows arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Unit tests
+        shell: bash
+        env:
+          # The race detector is unsupported on windows/arm64.
+          RACE: ${{ (runner.os != 'Windows' || runner.arch != 'ARM64') && '-race' || '' }}
+        run: go test $RACE -vet=all ./...
+
+  validate-openapi:
+    # Separate job: the validator runs in docker, which macOS runners lack.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate OpenAPI specs
+        run: make validate-openapi
+
+  hurl-lint:
+    runs-on: ubuntu-latest
+    env:
+      HURL_VERSION: 8.0.1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install hurl
+        run: |
+          curl --location --remote-name "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt update && sudo apt install ./hurl_${HURL_VERSION}_amd64.deb
+
+      - name: Lint .hurl files
+        run: make hurl-lint
+
+  release-dry-run:
+    # Runs the release pipeline in snapshot mode: builds the binaries and
+    # the linux/amd64 + linux/arm64 docker images, but publishes nothing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean

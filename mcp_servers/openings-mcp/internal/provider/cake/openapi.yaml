@@ -1,0 +1,489 @@
+openapi: 3.1.0
+
+info:
+  title: Cake.me Minimal Job Description API
+  description: >
+    Minimal client API surface needed to search Cake.me jobs and fetch the full
+    job description. The search endpoint returns enough data to discover job
+    paths. The detail endpoint returns the full HTML description and
+    requirements for a selected job.
+
+    Observed website route: the public job page is
+    `https://www.cake.me/companies/{page_path}/jobs/{path}`, while the JSON
+    detail data is fetched from `https://api.cake.me/api/client/v1/jobs/{path}`.
+  version: "1.0.0"
+
+servers:
+  - url: https://api.cake.me
+    description: Production
+
+tags:
+  - name: Jobs
+    description: Minimal job search and detail endpoints
+
+paths:
+  /api/client/v1/jobs/search:
+    post:
+      tags: [Jobs]
+      summary: Search jobs
+      description: >
+        Searches jobs by keyword and returns paginated results. For the minimal
+        job-description workflow, callers only need each result's `path` to
+        request the full detail from `/api/client/v1/jobs/{path}`.
+
+        Observed minimal request requirements:
+        `query`, `sort_by`, and `filters` are required (missing any of them
+        returns 422). `page` and `per_page` are optional and default to page 1
+        with 20 jobs per page. Use `filters: {}` when no filters are needed.
+      operationId: searchJobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobSearchRequest"
+            examples:
+              minimal:
+                summary: Minimal keyword search
+                value:
+                  query: "Golang"
+                  sort_by: "popularity"
+                  filters: {}
+              paginated:
+                summary: Fetch a later page
+                value:
+                  query: "Golang"
+                  page: 2
+                  sort_by: "popularity"
+                  filters: {}
+              filtered:
+                summary: Optional normal filter usage
+                value:
+                  query: "Golang"
+                  page: 1
+                  sort_by: "popularity"
+                  filters:
+                    locations: ["Taiwan"]
+                    job_types: ["full_time"]
+                    remote: ["partial_remote_work"]
+                    salary:
+                      type: "per_month"
+                      currency: "TWD"
+                      min: 60000
+      responses:
+        "200":
+          description: Search succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobSearchResponse"
+        default:
+          description: >
+            Any non-200 status. The API is reverse-engineered, so error codes
+            are not exhaustively known; a 422 has been observed when required
+            search fields are missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/client/v1/jobs/{path}:
+    get:
+      tags: [Jobs]
+      summary: Get job detail
+      description: >
+        Fetches a single job by the `path` returned from the search endpoint.
+        This is the minimal endpoint needed for the full job description:
+        `description` and `requirements` are returned as HTML strings.
+      operationId: getJobDetail
+      parameters:
+        - name: path
+          in: path
+          required: true
+          description: Job path returned by `data[].path` from the search endpoint.
+          schema:
+            type: string
+          example: "senior-golang-web-backend-engineer-taoyuan"
+      responses:
+        "200":
+          description: Job detail found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobDetail"
+        default:
+          description: >
+            Any non-200 status. The API is reverse-engineered, so error codes
+            are not exhaustively known; a 404 has been observed when the job
+            path was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    JobSearchRequest:
+      type: object
+      required: [query, sort_by, filters]
+      properties:
+        query:
+          type: string
+          description: >
+            Search keyword. Use an empty string to browse jobs without a keyword.
+          example: "Golang"
+        page:
+          type: integer
+          minimum: 1
+          description: >
+            1-based page number. Observed as optional; omitting it returns page 1.
+          example: 1
+        per_page:
+          type: integer
+          minimum: 1
+          description: >
+            Number of jobs per page. Observed as optional; omitting it returns
+            20 jobs per page. The website UI sends 10.
+          example: 20
+        sort_by:
+          type: string
+          enum: [popularity, latest]
+          description: >
+            Sort order for the search results. This is the only request field
+            with server-side validation: any other value returns 422.
+          example: "popularity"
+        filters:
+          $ref: "#/components/schemas/JobSearchFilters"
+
+    JobSearchFilters:
+      type: object
+      description: >
+        Search filters. Use `{}` for the minimal job-description workflow.
+        All keys are optional. Filter values are not validated server-side:
+        unknown values are silently ignored or match nothing, so clients must
+        send the exact enumerated values below. Enumerations were captured on
+        2026-07-02 from the website filter UI and the `available_facets` block
+        the API returns with every search response. Open vocabularies
+        (`locations`, `professions`, `page.sectors`, `page.tech_labels`,
+        `lang_names`) are data-derived and unbounded, so they stay plain
+        strings; read current values from `available_facets` instead of
+        guessing.
+      properties:
+        locations:
+          type: array
+          description: >
+            Location names as shown on the website, localized (both English and
+            Chinese names are accepted, e.g. "Taiwan", "台灣",
+            "Taipei City, Taiwan"). Valid values come from
+            `available_facets.locations`.
+          items:
+            type: string
+          example: ["台灣"]
+        professions:
+          type: array
+          description: >
+            Profession slugs in `category_subcategory` form, e.g.
+            "it_back-end-engineer", "it_software-engineer". Valid values come
+            from `available_facets.professions` (399 observed globally).
+          items:
+            type: string
+          example: ["it_back-end-engineer"]
+        job_types:
+          type: array
+          description: Employment types.
+          items:
+            type: string
+            enum:
+              - full_time
+              - part_time
+              - internship
+              - contract
+              - freelance
+              - temporary
+              - volunteer
+          example: ["full_time"]
+        seniority_levels:
+          type: array
+          description: Seniority of the role.
+          items:
+            type: string
+            enum:
+              - internship_level
+              - entry_level
+              - associate
+              - mid_senior_level
+              - director
+              - executive
+          example: ["mid_senior_level"]
+        year_of_seniority:
+          type: array
+          description: Required years of work experience, as range buckets.
+          items:
+            type: string
+            enum:
+              - "0_1"
+              - "1_3"
+              - "3_5"
+              - "5_10"
+              - "10_"
+          example: ["5_10"]
+        number_of_management:
+          type: array
+          description: Number of people the role manages, as range buckets.
+          items:
+            type: string
+            enum:
+              - not_specified
+              - none
+              - one_five
+              - five_ten
+              - ten_fifteen
+              - fifteen_
+          example: ["none"]
+        remote:
+          type: array
+          description: Remote-work policy.
+          items:
+            type: string
+            enum:
+              - no_remote_work
+              - partial_remote_work
+              - optional_remote_work
+              - full_remote_work
+          example: ["partial_remote_work"]
+        inclusivity_traits:
+          type: array
+          description: Inclusive-hiring traits the employer highlights.
+          items:
+            type: string
+            enum:
+              - foreign_talents
+              - gender_equity
+              - lgbtq
+              - career_change
+              - back_to_work
+              - disability_confident
+              - senior_citizen
+          example: ["lgbtq"]
+        lang_names:
+          type: array
+          description: >
+            Language of the job description, as an English language name.
+            Data-derived; observed values include "English", "Chinese",
+            "Japanese", "Korean", "Vietnamese", "Indonesian", "French",
+            "Arabic", "Malay (macrolanguage)". Valid values come from
+            `available_facets.lang_names`.
+          items:
+            type: string
+          example: ["Chinese"]
+        salary:
+          type: object
+          description: Salary range filter.
+          properties:
+            type:
+              type: string
+              description: >
+                Pay period. The website UI only offers per_month and per_year,
+                but the API accepts all values listed in
+                `available_facets.salary.type`.
+              enum:
+                - per_month
+                - per_year
+                - per_hour
+                - per_day
+                - piece_rate_pay
+              example: "per_month"
+            currency:
+              type: string
+              description: >
+                ISO 4217 currency code. Enumerated values were observed in
+                `available_facets.salary.currency`.
+              enum:
+                - TWD
+                - USD
+                - JPY
+                - EUR
+                - GBP
+                - CNY
+                - HKD
+                - SGD
+                - CAD
+                - MYR
+                - IDR
+                - VND
+                - THB
+                - PHP
+                - INR
+                - AED
+                - AFN
+                - UAH
+              example: "TWD"
+            min:
+              type: integer
+              minimum: 0
+              description: Minimum salary in the selected currency and period.
+              example: 60000
+            max:
+              type: integer
+              minimum: 0
+              description: Maximum salary in the selected currency and period.
+              example: 150000
+        page:
+          type: object
+          description: Filters on the employer's company page.
+          properties:
+            number_of_employees:
+              type: array
+              description: Company size, as employee-count range buckets.
+              items:
+                type: string
+                enum:
+                  - "1_10"
+                  - "11_50"
+                  - "51_200"
+                  - "201_500"
+                  - "501_1000"
+                  - "1001_5000"
+                  - "5001_"
+              example: ["51_200"]
+            sectors:
+              type: array
+              description: >
+                Industry sector slugs, either a bare category ("tech") or
+                `category_subcategory` ("tech_software"). Valid values come
+                from `available_facets.page.sectors` (150 observed globally).
+              items:
+                type: string
+              example: ["tech_software"]
+            tech_labels:
+              type: array
+              description: >
+                Technologies the company uses, e.g. "go", "kubernetes". Valid
+                values come from `available_facets.page.tech_labels`.
+              items:
+                type: string
+              example: ["go"]
+
+    JobSearchResponse:
+      type: object
+      description: >
+        Search response. The production API returns additional fields such as
+        `available_facets` and `query_id`; they are not required for the minimal
+        search-then-detail workflow.
+      required: [total_entries, total_pages, per_page, current_page, data]
+      properties:
+        total_entries:
+          type: integer
+          nullable: true
+          example: 360
+        total_pages:
+          type: integer
+          nullable: true
+          example: 18
+        per_page:
+          type: integer
+          nullable: true
+          description: Page size. Echoes the request `per_page`; defaults to 20.
+          example: 20
+        current_page:
+          type: integer
+          nullable: true
+          example: 1
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobSearchItem"
+
+    JobSearchItem:
+      type: object
+      description: >
+        Minimal job search item. `description` is useful for previews, but the
+        detail endpoint returns a fuller HTML description and requirements.
+      required: [path, title, description]
+      properties:
+        path:
+          type: string
+          description: Path used to fetch full job detail.
+          example: "senior-golang-web-backend-engineer-taoyuan"
+        title:
+          type: string
+          nullable: true
+          example: "資深 Golang 網頁後端工程師(桃園)"
+        description:
+          type: string
+          nullable: true
+          description: Plain-text search-result description or preview.
+          example: "【職務內容】\n維護現有系統與功能、新專案開發..."
+        page:
+          $ref: "#/components/schemas/JobSearchPage"
+
+    JobSearchPage:
+      type: object
+      description: Company page metadata returned with a search result.
+      required: [path]
+      properties:
+        path:
+          type: string
+          nullable: true
+          description: Company/page slug associated with the job.
+          example: "lctech_"
+
+    JobDetail:
+      type: object
+      description: >
+        Minimal job detail payload. The production API returns many more fields;
+        these fields are enough to retrieve the full job description content.
+      required: [id, path, page_path, title, description, requirements]
+      properties:
+        id:
+          type: integer
+          nullable: true
+          example: 46590
+        path:
+          type: string
+          nullable: true
+          example: "senior-golang-web-backend-engineer-taoyuan"
+        page_path:
+          type: string
+          nullable: true
+          description: >
+            Company/page slug associated with the job. Together with `path`,
+            this forms the public website URL:
+            `https://www.cake.me/companies/{page_path}/jobs/{path}`.
+          example: "lctech_"
+        title:
+          type: string
+          nullable: true
+          example: "資深 Golang 網頁後端工程師(桃園)"
+        description:
+          type: string
+          nullable: true
+          description: Full job description as an HTML string.
+          example: "<p>【職務內容】</p><p>維護現有系統與功能...</p>"
+        requirements:
+          type: string
+          nullable: true
+          description: Job requirements as an HTML string. May be an empty string.
+          example: "<p><strong>【基本條件】</strong></p>"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error_code:
+          type: string
+          nullable: true
+          example: null
+        msg:
+          type: string
+          nullable: true
+          example: "Resource not found"
+        error:
+          type: string
+          nullable: true
+          example: "Resource not found"
+        detail:
+          type: object
+          nullable: true
+          description: Error detail. Often null, or an object for validation errors.
+          additionalProperties: true
+      additionalProperties: true

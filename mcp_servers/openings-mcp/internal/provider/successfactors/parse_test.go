@@ -1,0 +1,219 @@
+package successfactors
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseSearchHTML(t *testing.T) {
+	f, err := os.Open("testdata/search_rsp.html")
+	require.NoError(t, err)
+	defer f.Close()
+
+	doc, err := goquery.NewDocumentFromReader(f)
+	require.NoError(t, err)
+
+	jobs, total, err := parseSearchHTML(doc)
+	require.NoError(t, err)
+	assert.Equal(t, 633, total)
+	require.Len(t, jobs, 25)
+	assert.Equal(t, Job{ID: "1414343333", Title: "Developer Associate", Location: "Bangalore, IN, 560066"}, jobs[0])
+}
+
+// parseResultsTotal must not hardcode the English connector word between
+// the two <b> tags: RWE's site defaults to German ("Ergebnisse <b>1 – 25</b>
+// von <b>205</b>"), observed live returning total=0 before this was fixed
+// to just take the last <b>-tagged number regardless of locale text.
+func TestParseSearchHTMLGermanLocale(t *testing.T) {
+	const page = `<html><body>
+<span class="keywordsearch-icon"></span>
+<span class="paginationLabel" aria-label="Ergebnisse 1 – 25">Ergebnisse <b>1 – 25</b> von <b>205</b></span>
+</body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	_, total, err := parseSearchHTML(doc)
+	require.NoError(t, err)
+	assert.Equal(t, 205, total)
+}
+
+// A tenant that configures no department dropdown at all (observed live on
+// Borealis and E.ON) must not be mistaken for an unrecognized page — only
+// the keyword search icon is a reliable "this is the search form" signal.
+func TestParseSearchHTMLNoDepartmentDropdown(t *testing.T) {
+	const page = `<html><body>
+<span class="keywordsearch-icon"></span>
+<select id="optionsFacetsDD_country"></select>
+</body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	jobs, total, err := parseSearchHTML(doc)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	assert.Equal(t, 0, total)
+}
+
+// A genuine zero-result page keeps the search form (and its department
+// dropdown) but has no result rows and no pagination label; that must read
+// as an empty search, not an error.
+func TestParseSearchHTMLNoResults(t *testing.T) {
+	f, err := os.Open("testdata/search_no_results_rsp.html")
+	require.NoError(t, err)
+	defer f.Close()
+
+	doc, err := goquery.NewDocumentFromReader(f)
+	require.NoError(t, err)
+
+	jobs, total, err := parseSearchHTML(doc)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	assert.Equal(t, 0, total)
+}
+
+func TestParseSearchHTMLUnrecognizedPageErrors(t *testing.T) {
+	const page = `<html><body>unusual response</body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	_, _, err = parseSearchHTML(doc)
+	require.Error(t, err)
+}
+
+func TestParseJobDetailHTML(t *testing.T) {
+	f, err := os.Open("testdata/job_detail_rsp.html")
+	require.NoError(t, err)
+	defer f.Close()
+
+	doc, err := goquery.NewDocumentFromReader(f)
+	require.NoError(t, err)
+
+	got, ok := parseJobDetailHTML(doc, "1414343333")
+	require.True(t, ok)
+	assert.Equal(t, "Developer Associate", got.Title)
+	assert.Equal(t, "Bangalore, IN, 560066", got.Location)
+	assert.Equal(t, "SAP", got.Employer)
+	assert.NotEmpty(t, got.PostedAtRaw)
+	assert.Contains(t, got.DescriptionHTML, "Application Engineering")
+}
+
+// The errorpage a not-found job ID redirects to (see openapi.yaml) renders
+// 200 but carries no itemprop="title" marker at all.
+func TestParseJobDetailHTMLNotFound(t *testing.T) {
+	f, err := os.Open("testdata/job_detail_not_found_rsp.html")
+	require.NoError(t, err)
+	defer f.Close()
+
+	doc, err := goquery.NewDocumentFromReader(f)
+	require.NoError(t, err)
+
+	_, ok := parseJobDetailHTML(doc, "999999999")
+	assert.False(t, ok)
+}
+
+// Some tenants (e.g. adidas, Eastman) omit the location/employer/date meta
+// tags entirely from their detail-page template; those fields must come
+// back empty rather than erroring.
+func TestParseJobDetailHTMLMinimalTemplate(t *testing.T) {
+	const page = `<html><body><div class="jobDisplayShell" itemscope itemtype="http://schema.org/JobPosting">
+<h1><span itemprop="title">Senior Manager, Materials Innovation Scaling</span></h1>
+<span itemprop="description"><span class="jobdescription"><p>Job summary.</p></span></span>
+</div></body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	got, ok := parseJobDetailHTML(doc, "1382210733")
+	require.True(t, ok)
+
+	want := &JobDetailResponse{
+		ID:              "1382210733",
+		Title:           "Senior Manager, Materials Innovation Scaling",
+		DescriptionHTML: "<p>Job summary.</p>",
+	}
+	assert.Equal(t, want, got)
+}
+
+// Some tenants (e.g. jobs.telefonica.com, issue #196) render the title as
+// <h1 itemprop="title"> instead of a span, put the jobdescription class on
+// the itemprop="description" element itself instead of a nested span, and
+// carry the address in addressLocality/addressRegion/addressCountry metas
+// with no streetAddress.
+func TestParseJobDetailHTMLH1TitleTemplate(t *testing.T) {
+	const page = `<html><body><div class="jobDisplayShell" itemscope="itemscope" itemtype="http://schema.org/JobPosting"><span itemprop="jobLocation" itemscope itemtype="http://schema.org/Place"><span itemprop="address" itemscope itemtype="http://schema.org/PostalAddress"><meta itemprop="addressLocality" content="LIMA"><meta itemprop="addressRegion" content="LIM"><meta itemprop="addressCountry" content="PE"></span></span><meta itemprop="datePosted" content="Thu Jul 16 02:01:00 UTC 2026"><meta itemprop="hiringOrganization" content="Telefónica">
+<h1 id="job-title" itemprop="title">Ejecutivo Asociado de Nómina</h1>
+<span itemprop="description" class="jobdescription"><p><strong>Misión del puesto:</strong></p></span>
+</div></body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	got, ok := parseJobDetailHTML(doc, "1395282033")
+	require.True(t, ok)
+
+	want := &JobDetailResponse{
+		ID:              "1395282033",
+		Title:           "Ejecutivo Asociado de Nómina",
+		Location:        "LIMA, LIM, PE",
+		Employer:        "Telefónica",
+		PostedAtRaw:     "Thu Jul 16 02:01:00 UTC 2026",
+		DescriptionHTML: "<p><strong>Misión del puesto:</strong></p>",
+	}
+	assert.Equal(t, want, got)
+}
+
+// Multi-brand SuccessFactors tenants (Endress+Hauser, Knorr-Bremse,
+// MediaMarktSaturn) omit itemprop="title" while still setting og:title and a
+// "… Détails du poste | Company" document title. Description remains on
+// itemprop="description".
+func TestParseJobDetailHTMLOgTitleFallback(t *testing.T) {
+	const page = `<html><head>
+<title>Pilote S&amp;OP &amp; Planification (h/f) Détails du poste | Endress+Hauser</title>
+<meta property="og:title" content="Pilote S&amp;OP &amp; Planification (h/f)">
+</head><body>
+<span itemprop="description" class="jobdescription"><p>Chez Endress+Hauser.</p></span>
+</body></html>`
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(page))
+	require.NoError(t, err)
+
+	got, ok := parseJobDetailHTML(doc, "1385729333")
+	require.True(t, ok)
+	assert.Equal(t, "Pilote S&OP & Planification (h/f)", got.Title)
+	assert.Equal(t, "<p>Chez Endress+Hauser.</p>", got.DescriptionHTML)
+}
+
+func TestTitleFromDocumentTitle(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "Account Manager", titleFromDocumentTitle("Account Manager Job Details | Knorr-Bremse"))
+	assert.Equal(t, "Pilote S&OP", titleFromDocumentTitle("Pilote S&OP Détails du poste | Endress+Hauser"))
+	assert.Equal(t, "", titleFromDocumentTitle("Jobs at Endress+Hauser"))
+	assert.Equal(t, "", titleFromDocumentTitle(""))
+}
+
+func TestFacetValuesJSON(t *testing.T) {
+	f, err := os.Open("testdata/facet_values_rsp.json")
+	require.NoError(t, err)
+	defer f.Close()
+
+	var raw facetValuesJSON
+	require.NoError(t, json.NewDecoder(f).Decode(&raw))
+
+	got := raw.toResponse()
+	require.Contains(t, got.Facets, "country")
+	assert.Contains(t, got.Facets["country"], FacetOption{Name: "DE", Translated: "Germany", Count: 192})
+}
+
+// facetValues can return an empty facets.map on tenants/queries with no
+// configured or matching filter dimensions (observed live on adidas and
+// Eastman); that must decode as an empty, non-nil map, not an error.
+func TestFacetValuesJSONEmpty(t *testing.T) {
+	var raw facetValuesJSON
+	require.NoError(t, json.Unmarshal([]byte(`{"facets":{"map":{}}}`), &raw))
+
+	got := raw.toResponse()
+	assert.Empty(t, got.Facets)
+}

@@ -1,0 +1,63 @@
+version: 2
+
+project_name: openings-mcp
+
+builds:
+  - main: ./cmd/openings-mcp
+    binary: openings-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+homebrew_casks:
+  - name: openings-mcp
+    binaries:
+      - openings-mcp
+    homepage: https://github.com/amikai/openings-mcp
+    description: MCP server for searching job listings across job boards and company career sites
+    repository:
+      owner: amikai
+      name: homebrew-tap
+      branch: main
+      token: '{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}'
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/openings-mcp"] if OS.mac?
+
+dockers_v2:
+  - images:
+      - ghcr.io/amikai/openings-mcp
+    tags:
+      - '{{ .Version }}'
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: '{{ .ProjectName }}'
+      org.opencontainers.image.description: 'MCP server for searching job listings across job boards and company career sites'
+      org.opencontainers.image.source: 'https://github.com/amikai/openings-mcp'
+      org.opencontainers.image.version: '{{ .Version }}'
+      org.opencontainers.image.licenses: MIT
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native

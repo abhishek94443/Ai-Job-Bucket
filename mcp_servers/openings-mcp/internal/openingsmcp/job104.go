@@ -1,0 +1,477 @@
+package openingsmcp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/amikai/openings-mcp/internal/provider/job104"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+var job104SearchInputRawSchema = []byte(`{
+	"type": "object",
+	"properties": {
+		"keyword": {
+			"type": "string",
+			"description": "Free-text keyword search.",
+			"minLength": 1
+		},
+		"area": {
+			"type": "string",
+			"description": "City/region filter.",
+			"enum": [
+				"Taipei", "NewTaipei", "Yilan", "Keelung", "Taoyuan",
+				"Hsinchu", "Miaoli", "Taichung", "Changhua", "Nantou",
+				"Yunlin", "Chiayi", "Tainan", "Kaohsiung", "Pingtung",
+				"Taitung", "Hualien", "Penghu", "Kinmen", "Lienchiang",
+				"Beijing", "Tianjin", "Shanghai", "Chongqing", "Guangdong",
+				"Fujian", "Hainan", "Zhejiang", "Jiangsu", "Shandong",
+				"Hebei", "Liaoning", "Jilin", "Heilongjiang", "Hunan",
+				"Hubei", "Jiangxi", "Anhui", "Henan", "Shanxi",
+				"Shaanxi", "Gansu", "Qinghai", "Sichuan", "Guizhou",
+				"Yunnan", "InnerMongolia", "Tibet", "Ningxia", "Xinjiang",
+				"Guangxi", "HongKong", "Macao",
+				"NortheastAsia", "SoutheastAsia", "OtherAsia",
+				"AustraliaNZ", "OtherOceania",
+				"Canada", "EasternUS", "WesternUS", "MidwesternUS",
+				"CentralAmerica", "SouthAmerica",
+				"NorthernEurope", "SouthernEurope", "EasternEurope",
+				"WesternEurope", "CentralEurope",
+				"NorthAfrica", "CentralAfrica", "SouthAfrica",
+				"EastAfrica", "WestAfrica"
+			]
+		},
+		"job_type": {
+			"type": "string",
+			"description": "Employment basis. Soft filter — verify each result's job_type.",
+			"enum": ["Full-time", "Part-time", "Senior", "Dispatch"]
+		},
+		"sort": {
+			"type": "string",
+			"description": "Result order. SalaryHigh also excludes postings without a disclosed salary (待遇面議), not just sorting.",
+			"enum": ["Relevance", "Newest", "SalaryHigh"]
+		},
+		"remote": {
+			"type": "string",
+			"description": "Remote-work preference. Full and Partial are soft filters — verify each result's remote. Omit to include all workplace arrangements; no on-site-only filter is available.",
+			"enum": ["Full", "Partial"]
+		},
+		"edu": {
+			"type": "array",
+			"description": "Education levels, OR'd together.",
+			"minItems": 1,
+			"uniqueItems": true,
+			"items": {
+				"type": "string",
+				"enum": ["HighSchoolBelow", "HighSchool", "College", "University", "Master", "Doctorate"]
+			}
+		},
+		"experience": {
+			"type": "array",
+			"description": "Minimum-experience brackets, OR'd together. Soft filter — verify each result's experience.",
+			"minItems": 1,
+			"uniqueItems": true,
+			"items": {
+				"type": "string",
+				"enum": ["Under1Year", "1To3Years", "3To5Years", "5To10Years", "Over10Years"]
+			}
+		},
+		"page": {
+			"type": "integer",
+			"description": "1-based page number.",
+			"minimum": 1,
+			"default": 1
+		}
+	},
+	"required": ["keyword", "area"],
+	"additionalProperties": false
+}`)
+
+// job104SearchInputSchema is hand-written JSON kept aligned with openapi.yaml's
+// searchJobs parameters: friendly property names, human labels instead of 104
+// codes (the ids.go maps translate labels back to codes — enum labels here
+// must match those map keys). Descriptions carry semantics only, never
+// id=label tables.
+var job104SearchInputSchema = mustSchema(job104SearchInputRawSchema)
+
+type job104SearchInput struct {
+	Keyword    string   `json:"keyword"` // required
+	Area       string   `json:"area"`    // required
+	JobType    string   `json:"job_type,omitempty"`
+	Sort       string   `json:"sort,omitempty"`
+	Remote     string   `json:"remote,omitempty"`
+	Edu        []string `json:"edu,omitempty"`
+	Experience []string `json:"experience,omitempty"`
+	Page       int      `json:"page,omitempty"`
+}
+
+// job104SearchOutput reshapes job104.JobsResponse for the LLM, making it
+// easy to read.
+type job104SearchOutput struct {
+	Data     []job104JobSummary   `json:"data"`
+	Metadata job104SearchMetadata `json:"metadata"`
+}
+
+type job104DetailInput struct {
+	JobCode string `json:"job_code" jsonschema:"104 job code, from a search result's jobCode field (not jobNo)."`
+}
+
+// job104DetailOutput reshapes job104.JobDetailResponse for the LLM, making
+// it easy to read.
+type job104DetailOutput struct {
+	JobName        string   `json:"jobName"`                                                                                               // header.jobName
+	CompanyName    string   `json:"companyName"`                                                                                           // header.custName
+	URL            string   `json:"url" jsonschema:"Public job posting URL."`                                                              // built from the job_code input; the 104 response has no posting URL
+	CompanyURL     string   `json:"companyUrl" jsonschema:"Company profile page URL."`                                                     // header.custUrl
+	AppearDate     string   `json:"appearDate"`                                                                                            // header.appearDate
+	JobDescription string   `json:"jobDescription,omitempty"`                                                                              // jobDetail.jobDescription
+	JobCategory    []string `json:"jobCategory,omitempty"`                                                                                 // jobDetail.jobCategory[].description
+	Salary         string   `json:"salary,omitempty"`                                                                                      // jobDetail.salary
+	SalaryMin      int      `json:"salaryMin,omitempty"`                                                                                   // jobDetail.salaryMin
+	SalaryMax      int      `json:"salaryMax,omitempty"`                                                                                   // jobDetail.salaryMax
+	JobType        string   `json:"job_type,omitempty" jsonschema:"Employment-basis label; matches the job_type input values."`            // jobDetail.jobType code → label; unknown code drops the field
+	Remote         string   `json:"remote,omitempty" jsonschema:"Remote-work label; matches the remote input values. Absent for on-site."` // jobDetail.remoteWork.type code → label; null/unknown drops the field
+	AddressRegion  string   `json:"addressRegion,omitempty"`                                                                               // jobDetail.addressRegion
+	AddressDetail  string   `json:"addressDetail,omitempty"`                                                                               // jobDetail.addressDetail
+	WorkExp        string   `json:"workExp,omitempty"`                                                                                     // condition.workExp
+	Edu            string   `json:"edu,omitempty"`                                                                                         // condition.edu
+	Major          []string `json:"major,omitempty"`                                                                                       // condition.major
+	Specialty      []string `json:"specialty,omitempty"`                                                                                   // condition.specialty[].description
+	Skill          []string `json:"skill,omitempty"`                                                                                       // condition.skill[].description
+	Certificate    []string `json:"certificate,omitempty"`                                                                                 // condition.certificate[].name
+	DriverLicense  []string `json:"driverLicense,omitempty"`                                                                               // condition.driverLicense
+	Language       []string `json:"language,omitempty"`                                                                                    // condition.language, flattened to 語言 — 聽:…、說:…、讀:…、寫:…
+	LocalLanguage  []string `json:"localLanguage,omitempty"`                                                                               // condition.localLanguage, flattened to 語言 — 能力
+	Other          string   `json:"other,omitempty" jsonschema:"其他條件 — free-text requirements such as shift work or cleanroom duty."`      // condition.other
+	AcceptRole     []string `json:"acceptRole,omitempty" jsonschema:"接受身份 — identity groups the posting accepts."`                         // condition.acceptRole.role[].description
+	// condition.acceptRole.disRole.needHandicapCompendium; false is omitted
+	NeedHandicapCompendium bool   `json:"needHandicapCompendium,omitempty" jsonschema:"True when applying requires a disability handbook (身心障礙手冊)."`
+	ManageResp             string `json:"manageResp,omitempty"` // jobDetail.manageResp
+	NeedEmp                string `json:"needEmp,omitempty"`    // jobDetail.needEmp
+	Welfare                string `json:"welfare,omitempty"`    // welfare.welfare
+	Industry               string `json:"industry,omitempty"`
+	Employees              string `json:"employees,omitempty"`
+}
+
+func job104MCPToHTTPRequest(in *job104SearchInput) (*job104.SearchJobsParams, error) {
+	var params job104.SearchJobsParams
+	// The schema already marks keyword and area required; this guards direct
+	// callers and clients that skip schema validation — a missing area fails
+	// its enum Validate below (empty label maps to the zero value).
+	if in.Keyword == "" {
+		return nil, errors.New("keyword is required")
+	}
+	params.Keyword = job104.NewOptString(in.Keyword)
+	// Always on: without it, a keyword 104 recognizes as a company name (e.g.
+	// 聯發科) gets a pagination-less companyKeyword response instead of job
+	// results, which fails JobsResponse decoding. See the parameter's
+	// description in openapi.yaml.
+	params.ExcludeCompanyKeyword = job104.NewOptBool(true)
+
+	area := job104.AreaIDs[in.Area]
+	if err := area.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid area %q: %w", in.Area, err)
+	}
+	params.Area = job104.NewOptSearchJobsArea(area)
+
+	if in.JobType != "" {
+		jobType := job104.RoIDs[in.JobType]
+		if err := jobType.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid job_type %q: %w", in.JobType, err)
+		}
+		params.Ro = job104.NewOptSearchJobsRo(jobType)
+	}
+
+	if in.Sort != "" {
+		sort := job104.OrderIDs[in.Sort]
+		if err := sort.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid sort %q: %w", in.Sort, err)
+		}
+		params.Order = job104.NewOptSearchJobsOrder(sort)
+	}
+
+	if in.Remote != "" {
+		remote := job104.RemoteWorkIDs[in.Remote]
+		if err := remote.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid remote %q: %w", in.Remote, err)
+		}
+		params.RemoteWork = job104.NewOptSearchJobsRemoteWork(remote)
+	}
+
+	for _, label := range in.Edu {
+		edu := job104.EduIDs[label]
+		if err := edu.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid edu %q: %w", label, err)
+		}
+		params.Edu = append(params.Edu, edu)
+	}
+
+	for _, label := range in.Experience {
+		exp := job104.JobExpIDs[label]
+		if err := exp.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid experience %q: %w", label, err)
+		}
+		params.Jobexp = append(params.Jobexp, exp)
+	}
+
+	if in.Page > 0 {
+		params.Page = job104.NewOptInt(in.Page)
+	}
+	return &params, nil
+}
+
+type job104JobSummary struct {
+	JobCode       string `json:"jobCode" jsonschema:"104 job code — pass this to 104_get_job_detail's job_code param."` // link.job's trailing path segment
+	JobName       string `json:"jobName"`
+	CompanyName   string `json:"companyName"`                                       // custName
+	URL           string `json:"url" jsonschema:"Public job posting URL."`          // link.job
+	CompanyURL    string `json:"companyUrl" jsonschema:"Company profile page URL."` // link.cust
+	SalaryHigh    int    `json:"salaryHigh" jsonschema:"Salary upper bound, in TWD per the salaryType period. 9999999 = no disclosed upper bound, not an actual figure."`
+	SalaryLow     int    `json:"salaryLow" jsonschema:"Salary lower bound, in TWD per the salaryType period."`
+	SalaryType    string `json:"salaryType,omitempty" jsonschema:"Salary period label for salaryLow/salaryHigh: Negotiable (待遇面議; both bounds are 0), Hourly, Daily, Monthly, Yearly, or PartTimeMonthly."` // s10 code → label; unknown code drops the field
+	JobAddrNoDesc string `json:"jobAddrNoDesc"`
+	AppearDate    string `json:"appearDate" jsonschema:"Posting date, YYYYMMDD."`
+	ApplyCnt      int    `json:"applyCnt"`
+	Remote        string `json:"remote,omitempty" jsonschema:"Remote-work label; matches the remote input values. Absent for on-site."`                                   // remoteWorkType code → label; unknown code drops the field
+	JobType       string `json:"job_type,omitempty" jsonschema:"Employment-basis label; matches the job_type input values."`                                              // jobRo code → label; unknown code drops the field
+	Experience    string `json:"experience" jsonschema:"Minimum-experience bracket label; matches the experience input values. Soft filter — verify against this field."` // period bucketed into the same brackets as the experience input
+}
+
+type job104SearchMetadata struct {
+	Pagination job104Pagination `json:"pagination"`
+}
+
+type job104Pagination struct {
+	CurrentPage int `json:"currentPage"`
+	LastPage    int `json:"lastPage"`
+	Total       int `json:"total"`
+}
+
+// job104RoLabels and job104RemoteWorkLabels invert the ids.go request maps
+// for response conversion, keeping ids.go the single source of truth.
+var job104RoLabels = func() map[job104.SearchJobsRo]string {
+	m := make(map[job104.SearchJobsRo]string, len(job104.RoIDs))
+	for label, code := range job104.RoIDs {
+		m[code] = label
+	}
+	return m
+}()
+
+var job104RemoteWorkLabels = func() map[job104.SearchJobsRemoteWork]string {
+	m := make(map[job104.SearchJobsRemoteWork]string, len(job104.RemoteWorkIDs))
+	for label, code := range job104.RemoteWorkIDs {
+		m[code] = label
+	}
+	return m
+}()
+
+// job104SalaryTypeLabels maps a JobSummary's raw s10 salary-type code to the
+// salaryType output label, per the code table on JobSummary.s10 in
+// openapi.yaml. There is no matching request parameter, so unlike the maps
+// above there is no ids.go map to invert.
+var job104SalaryTypeLabels = map[int]string{
+	10: "Negotiable",      // 待遇面議
+	30: "Hourly",          // 時薪
+	40: "Daily",           // 日薪
+	50: "Monthly",         // 月薪
+	60: "Yearly",          // 年薪
+	70: "PartTimeMonthly", // 部分工時(月薪)
+}
+
+// job104ExperienceLabel buckets a JobSummary's raw period value into the
+// same labels as the experience input, mirroring the jobexp/period mapping
+// documented on JobSummary.period in openapi.yaml (jobexp 1 → period 0-1,
+// 3 → 2-3, 5 → 4-5, 10 → 6-10, 99 → 11+). A null period is distinct from
+// a real 0 (no requirement) and returns "" rather than a fabricated bucket.
+func job104ExperienceLabel(nilPeriod job104.NilInt) string {
+	period, ok := nilPeriod.Get()
+	if !ok {
+		return ""
+	}
+	switch {
+	case period <= 1:
+		return "Under1Year"
+	case period <= 3:
+		return "1To3Years"
+	case period <= 5:
+		return "3To5Years"
+	case period <= 10:
+		return "5To10Years"
+	default:
+		return "Over10Years"
+	}
+}
+
+func job104HTTPToMCPResponse(resp *job104.JobsResponse) *job104SearchOutput {
+	out := &job104SearchOutput{
+		Data: make([]job104JobSummary, 0, len(resp.Data)),
+		Metadata: job104SearchMetadata{
+			Pagination: job104Pagination{
+				CurrentPage: resp.Metadata.Pagination.CurrentPage.Value,
+				LastPage:    resp.Metadata.Pagination.LastPage.Value,
+				Total:       resp.Metadata.Pagination.Total.Value,
+			},
+		},
+	}
+	for _, j := range resp.Data {
+		out.Data = append(out.Data, job104JobSummary{
+			JobCode:       job104.JobCodeFromURL(j.Link.Job),
+			JobName:       j.JobName.Value,
+			CompanyName:   j.CustName.Value,
+			URL:           j.Link.Job,
+			CompanyURL:    j.Link.Cust.Value,
+			SalaryHigh:    j.SalaryHigh.Value,
+			SalaryLow:     j.SalaryLow.Value,
+			SalaryType:    job104SalaryTypeLabels[j.S10.Value],
+			JobAddrNoDesc: j.JobAddrNoDesc.Value,
+			AppearDate:    j.AppearDate.Value,
+			ApplyCnt:      j.ApplyCnt.Value,
+			Remote:        job104RemoteWorkLabels[job104.SearchJobsRemoteWork(j.RemoteWorkType.Value)],
+			JobType:       job104RoLabels[job104.SearchJobsRo(j.JobRo.Value)],
+			Experience:    job104ExperienceLabel(j.Period),
+		})
+	}
+	return out
+}
+
+func job104HTTPToMCPDetail(resp *job104.JobDetailResponse, jobCode string) *job104DetailOutput {
+	d := resp.Data
+	out := &job104DetailOutput{
+		JobName:        d.Header.JobName.Value,
+		CompanyName:    d.Header.CustName.Value,
+		URL:            "https://www.104.com.tw/job/" + jobCode,
+		CompanyURL:     d.Header.CustUrl.Value,
+		AppearDate:     d.Header.AppearDate.Value,
+		JobDescription: d.JobDetail.JobDescription.Or(""),
+		JobCategory:    job104Descriptions(d.JobDetail.JobCategory),
+		Salary:         d.JobDetail.Salary.Or(""),
+		SalaryMin:      d.JobDetail.SalaryMin.Or(0),
+		SalaryMax:      d.JobDetail.SalaryMax.Or(0),
+		JobType:        job104RoLabels[job104.SearchJobsRo(d.JobDetail.JobType.Or(0))],
+		AddressRegion:  d.JobDetail.AddressRegion.Or(""),
+		AddressDetail:  d.JobDetail.AddressDetail.Or(""),
+		WorkExp:        d.Condition.WorkExp.Or(""),
+		Edu:            d.Condition.Edu.Or(""),
+		Major:          d.Condition.Major,
+		Specialty:      job104Descriptions(d.Condition.Specialty),
+		Skill:          job104Descriptions(d.Condition.Skill),
+		Certificate:    job104CertificateNames(d.Condition.Certificate),
+		DriverLicense:  d.Condition.DriverLicense,
+		Language:       job104LanguageLabels(d.Condition.Language),
+		LocalLanguage:  job104LocalLanguageLabels(d.Condition.LocalLanguage),
+		Other:          d.Condition.Other.Or(""),
+		ManageResp:     d.JobDetail.ManageResp.Or(""),
+		NeedEmp:        d.JobDetail.NeedEmp.Or(""),
+		Welfare:        d.Welfare.Welfare.Or(""),
+		Industry:       d.Industry.Value,
+		Employees:      d.Employees.Value,
+	}
+	if rw, ok := d.JobDetail.RemoteWork.Get(); ok {
+		out.Remote = job104RemoteWorkLabels[job104.SearchJobsRemoteWork(rw.Type.Or(0))]
+	}
+	if ar, ok := d.Condition.AcceptRole.Get(); ok {
+		for _, r := range ar.Role {
+			out.AcceptRole = append(out.AcceptRole, r.Description.Or(""))
+		}
+		if dr, ok := ar.DisRole.Get(); ok {
+			out.NeedHandicapCompendium = dr.NeedHandicapCompendium.Or(false)
+		}
+	}
+	return out
+}
+
+func job104Descriptions(in []job104.CodeDescription) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, cd := range in {
+		out = append(out, cd.Description.Or(""))
+	}
+	return out
+}
+
+func job104CertificateNames(in []job104.JobDetailConditionCertificateItem) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		out = append(out, c.Name.Or(""))
+	}
+	return out
+}
+
+// job104LanguageLabels flattens foreign-language requirements to
+// "語言 — 聽:…、說:…、讀:…、寫:…" strings.
+func job104LanguageLabels(in []job104.JobDetailConditionLanguageItem) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, l := range in {
+		label := l.Language.Or("")
+		if a, ok := l.Ability.Get(); ok {
+			label += " — 聽:" + a.Listening.Or("") + "、說:" + a.Speaking.Or("") + "、讀:" + a.Reading.Or("") + "、寫:" + a.Writing.Or("")
+		}
+		out = append(out, label)
+	}
+	return out
+}
+
+// job104LocalLanguageLabels flattens local-language (本國語言) requirements
+// to "語言 — 能力" strings; unlike foreign languages, the 104 API reports a
+// single proficiency per language.
+func job104LocalLanguageLabels(in []job104.JobDetailConditionLocalLanguageItem) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, l := range in {
+		label := l.Language.Or("")
+		if a := l.Ability.Or(""); a != "" {
+			label += " — " + a
+		}
+		out = append(out, label)
+	}
+	return out
+}
+
+// RegisterJob104 registers the 104 search and job-detail tools.
+func RegisterJob104(s *mcp.Server, c *job104.Client) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "104_search_jobs",
+		Description: "Search jobs on 104 (Taiwan's largest job board).",
+		Annotations: &mcp.ToolAnnotations{Title: "Search 104 jobs", ReadOnlyHint: true},
+		InputSchema: job104SearchInputSchema,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in *job104SearchInput) (*mcp.CallToolResult, *job104SearchOutput, error) {
+		params, err := job104MCPToHTTPRequest(in)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+		resp, err := c.SearchJobs(ctx, *params)
+		if err != nil {
+			if ue, ok := errors.AsType[*job104.ErrorResponseStatusCode](err); ok {
+				return errorResult(fmt.Errorf("upstream error: %d", ue.StatusCode)), nil, nil
+			}
+			return errorResult(err), nil, nil
+		}
+		return nil, job104HTTPToMCPResponse(resp), nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "104_get_job_detail",
+		Description: "Get the full job description for a 104 job code (jobCode from 104_search_jobs results, not jobNo).",
+		Annotations: &mcp.ToolAnnotations{Title: "Get 104 job details", ReadOnlyHint: true},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in *job104DetailInput) (*mcp.CallToolResult, *job104DetailOutput, error) {
+		resp, err := c.GetJobDetail(ctx, job104.GetJobDetailParams{JobCode: in.JobCode})
+		if err != nil {
+			if ue, ok := errors.AsType[*job104.ErrorResponseStatusCode](err); ok {
+				return errorResult(fmt.Errorf("upstream error: %d", ue.StatusCode)), nil, nil
+			}
+			return errorResult(err), nil, nil
+		}
+		return nil, job104HTTPToMCPDetail(resp, in.JobCode), nil
+	})
+}

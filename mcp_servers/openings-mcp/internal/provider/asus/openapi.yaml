@@ -1,0 +1,300 @@
+openapi: 3.1.0
+info:
+  title: ASUS Careers Job Search
+  version: 1.0.0
+  description: |
+    Client-side API specification for the ASUS Careers recruitment site at
+    https://recruit.asus.com.
+
+    ## Architecture
+
+    ASUS Careers uses **server-side rendering (SSR)** powered by ASP.NET Core MVC.
+    Job search and detail pages return server-rendered HTML.
+
+    ## Key Endpoints
+
+    - `/Jobs`: HTML search listing. Supports filtering by keyword, job category
+      prefix (`REQ_TYPEs_Prefix`), location country (`Location`), city (`City`),
+      and experience level (`WORK_EXP`). Results are paginated at 5 jobs per page
+      via the `page` query parameter (1-based).
+    - `/Jobs/Detail`: HTML job details. Identified by the opaque UUID query
+      parameter `sn`.
+    - `/Jobs/GetCities`: JSON helper endpoint returning available cities for a
+      given country code (`countryTw`).
+
+    ## Where filter values come from
+
+    `/Jobs/GetCities` is the only JSON endpoint, and it serves cities alone.
+    The category, country and experience options are served nowhere but the
+    `/Jobs` search form itself, as `input[name=REQ_TYPEs_Prefix]`,
+    `select#Location` and `select#WORK_EXP`. This spec therefore fixes no
+    value set for them: the served page is the enumeration.
+
+    Two behaviours make that worth respecting. `REQ_TYPEs_Prefix` submits the
+    category's **localized label** as its value, and the board is bilingual —
+    a session that visited `/Home/SetLanguage?culture=en-US` filters with
+    `Research and Development` where a zh-TW session filters with `研究發展`,
+    and each value is inert in the other's locale. And an unrecognized
+    `REQ_TYPEs_Prefix` or `WORK_EXP` is dropped rather than rejected, so the
+    answer is the whole board under HTTP 200. `Location` is the exception: an
+    unknown country code matches nothing.
+
+servers:
+  - url: https://recruit.asus.com
+    description: ASUS Careers
+
+paths:
+  /Jobs:
+    get:
+      operationId: searchJobs
+      summary: Search and filter job openings
+      description: |
+        Returns an HTML page containing job openings matching the given criteria.
+      parameters:
+        - name: Keyword
+          in: query
+          description: Free-text keyword search across job titles.
+          required: false
+          schema:
+            type: string
+          example: "AI"
+        - name: REQ_TYPEs_Prefix
+          in: query
+          description: |
+            Job function category prefix, repeated once per selected category.
+            See `Category` for where the valid values come from and why an
+            unrecognized one is not an error.
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/Category'
+          style: form
+          explode: true
+          example: ["研究發展"]
+        - name: Location
+          in: query
+          description: |
+            Two-letter country code following ISO 3166-1 alpha-2 (e.g. `TW`, `US`, `CN`, `JP`),
+            with the exception of Slovenia which uses `SL` instead of the standard `SI`.
+            The codes on offer are the `select#Location` options of the `/Jobs`
+            search form; they list every country ASUS operates in, not the ones
+            currently hiring, so a valid code may match nothing. Unlike the
+            other filters, an unknown code matches nothing rather than being
+            ignored.
+          required: false
+          schema:
+            type: string
+          example: "TW"
+        - name: City
+          in: query
+          description: City code (e.g. `TPE` for Taipei, `HSI` for Hsinchu) obtained from `/Jobs/GetCities`.
+          required: false
+          schema:
+            type: string
+          example: "TPE"
+        - name: WORK_EXP
+          in: query
+          description: |
+            Years of experience filter code. See `ExperienceLevel` for where
+            the valid values come from.
+          required: false
+          schema:
+            $ref: '#/components/schemas/ExperienceLevel'
+          example: "0"
+        - name: page
+          in: query
+          description: 1-based page number for pagination. Each page contains up to 5 jobs.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+      responses:
+        '200':
+          description: |
+            HTML page containing the job listing table, pagination controls, and
+            the search form whose controls enumerate the category, country and
+            experience filter values. The form is rendered even when the query
+            matched nothing.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /Jobs/Detail:
+    get:
+      operationId: getJobDetail
+      summary: Retrieve detailed job opening information
+      description: |
+        Returns an HTML page detailing a specific job opening identified by its UUID `sn`.
+      parameters:
+        - name: sn
+          in: query
+          description: Opaque UUID identifier of the job opening (from search results).
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "762c08de-1daa-4aa8-9668-d8a746ce24a8"
+      responses:
+        '200':
+          description: HTML page containing job title, requirements, description, and application metadata.
+          content:
+            text/html:
+              schema:
+                type: string
+        '500':
+          description: Job opening not found or invalid identifier.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /Jobs/GetCities:
+    get:
+      operationId: getCities
+      summary: Get cities for a given country code
+      description: |
+        Returns a JSON list of city options available for the specified country.
+      parameters:
+        - name: countryTw
+          in: query
+          description: |
+            Two-letter country code following ISO 3166-1 alpha-2 (e.g. `TW`, `US`),
+            with the exception of Slovenia which uses `SL` instead of the standard `SI`.
+          required: true
+          schema:
+            type: string
+          example: "TW"
+      responses:
+        '200':
+          description: Array of city dropdown options.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CityOption'
+
+components:
+  schemas:
+    Category:
+      type: string
+      description: |
+        Top-level job category prefix on ASUS Careers, spelled as the category's
+        own localized label — the value is the display text, so it is only
+        accepted by the locale that served it (`研究發展` for zh-TW,
+        `Research and Development` for en-US).
+
+        The values on offer are the `input[name=REQ_TYPEs_Prefix]` checkboxes of
+        the `/Jobs` search form for the current locale. No fixed set is listed
+        here: one would be a copy that is right for one locale at a time, and
+        an unrecognized value is silently ignored rather than rejected, so a
+        stale copy reads as an unfiltered board rather than as an error.
+      examples:
+        - 研究發展
+        - Research and Development
+
+    ExperienceLevel:
+      type: string
+      description: |
+        Years of experience filter code, from the `select#WORK_EXP` options of
+        the `/Jobs` search form. The codes are locale-independent; only their
+        labels translate (`0` is 2年以下 / Less than 2 Years). An unrecognized
+        code is silently ignored rather than rejected.
+      examples:
+        - "0"
+
+    JobSummary:
+      type: object
+      description: Parsed job vacancy item from search results.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque job identifier (sn).
+        jobNo:
+          type: string
+          description: Job requisition number (e.g. AB12036).
+        title:
+          type: string
+          description: Full job title.
+        category:
+          type: string
+          description: Category track string.
+        location:
+          type: string
+          description: Country and city display string.
+        experience:
+          type: string
+          description: Required experience text.
+        education:
+          type: string
+          description: Education requirement text.
+        detailUrl:
+          type: string
+          format: uri
+          description: Link to job detail page.
+        applyUrl:
+          type: string
+          format: uri
+          description: Link to apply for this job.
+      required:
+        - id
+        - title
+
+    JobDetail:
+      type: object
+      description: Parsed job detail information.
+      properties:
+        id:
+          type: string
+          format: uuid
+        jobNo:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        location:
+          type: string
+        experience:
+          type: string
+        education:
+          type: string
+        employmentType:
+          type: string
+        description:
+          type: string
+        requirements:
+          type: string
+        applyUrl:
+          type: string
+          format: uri
+      required:
+        - id
+        - title
+
+    CityOption:
+      type: object
+      properties:
+        Disabled:
+          type: boolean
+        Group:
+          type: object
+          nullable: true
+        Selected:
+          type: boolean
+        Text:
+          type: string
+          description: Display name of the city in Traditional Chinese (e.g. 臺北).
+        Value:
+          type: string
+          description: City code (e.g. TPE).
+      required:
+        - Disabled
+        - Selected
+        - Text
+        - Value
