@@ -14,6 +14,7 @@ Fully decoupled: The Next.js frontend can run on localhost:3000, Vercel, or be d
 import base64
 import json
 import logging
+import math
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -144,34 +145,41 @@ def get_jobs(
     search: Optional[str] = Query(None, description="Search keyword in title, company, or description"),
     min_score: Optional[int] = Query(None, description="Minimum match relevance score"),
     status: Optional[str] = Query(None, description="Application tracking status filter"),
-    portal: Optional[str] = Query(None, description="Platform source: freehire, linkedin, indeed"),
-    limit: Optional[int] = Query(None, description="Maximum jobs to retrieve"),
+    portal: Optional[str] = Query(None, description="Platform source: freehire, linkedin, indeed (comma-separated supported)"),
+    posted_within: Optional[str] = Query(None, description="Date posted window: 'last 24 hours', 'last 3 days', 'last 7 days', 'last 14 days', 'last 30 days'"),
+    fetched_within: Optional[str] = Query(None, description="Date fetched window: 'today', 'last 24 hours', 'last 3 days', 'last 7 days', 'last 14 days', 'last 30 days'"),
+    sort_by: Optional[str] = Query("ai_score", description="Sort by: 'ai_score', 'newest', 'fetched', 'company'"),
+    sort_order: Optional[str] = Query("DESC", description="Sort direction: 'DESC' or 'ASC'"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=500, description="Jobs per page (default 20)"),
+    limit: Optional[int] = Query(None, description="Legacy limit override"),
 ):
     try:
-        jobs = query_svc.get_all_jobs(limit=limit or 500)
-        
-        # Apply filters
-        filtered = []
-        for j in jobs:
-            if search:
-                s_lower = search.lower()
-                title_match = s_lower in (j.get("title") or "").lower()
-                comp_match = s_lower in (j.get("company") or "").lower()
-                desc_match = s_lower in (j.get("description") or "").lower()
-                if not (title_match or comp_match or desc_match):
-                    continue
-            
-            if min_score is not None:
-                score = j.get("relevance_score") or j.get("v2_overall_score") or 0
-                if score < min_score:
-                    continue
-                    
-            if portal and (j.get("platform") or "").lower() != portal.lower():
-                continue
-                
-            filtered.append(j)
-            
-        return {"total": len(filtered), "jobs": filtered}
+        # If legacy limit provided without explicit page_size, adapt page_size
+        effective_page_size = limit if (limit and limit > 0 and page_size == 20) else page_size
+
+        rows, total_count = query_svc.search_jobs(
+            search_term=search,
+            platform=portal,
+            min_score=min_score,
+            user_status=status if (status and status != "ALL") else None,
+            posted_within=posted_within,
+            fetched_within=fetched_within,
+            sort_by=sort_by or "ai_score",
+            sort_order=sort_order or "DESC",
+            page=page,
+            page_size=effective_page_size,
+        )
+
+        total_pages = max(1, math.ceil(total_count / effective_page_size)) if total_count > 0 else 1
+
+        return {
+            "total": total_count,
+            "page": page,
+            "page_size": effective_page_size,
+            "total_pages": total_pages,
+            "jobs": rows,
+        }
     except Exception as e:
         logger.error(f"Failed to fetch jobs: {e}")
         raise HTTPException(status_code=500, detail=str(e))

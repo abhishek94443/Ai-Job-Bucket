@@ -156,12 +156,13 @@ class DashboardQueryService:
         experience_level: Optional[str] = None,
         min_score: Optional[int] = None,
         posted_within: Optional[str] = None,  # "All time", "Last 24 hours", "Last 3 days", "Last 7 days", "Last 14 days", "Last 30 days"
+        fetched_within: Optional[str] = None,  # "today", "last 24 hours", "last 3 days", "last 7 days", "last 14 days", "last 30 days"
         include_unknown_dates: bool = False,
         ai_verdict: Optional[str] = None,
         evaluation_source: Optional[str] = None,
         user_status: Optional[str] = None,
         exclude_applied: bool = False,
-        sort_by: str = "score",  # "ai_score", "score", "date", "company", "newest"
+        sort_by: str = "score",  # "ai_score", "score", "date", "company", "newest", "fetched"
         sort_order: str = "DESC",
         page: int = 1,
         page_size: int = 10
@@ -181,8 +182,14 @@ class DashboardQueryService:
             params.extend([term, term, term])
 
         if platform and platform != "ALL":
-            conditions.append("LOWER(platform) = LOWER(%s)")
-            params.append(platform)
+            plats = [p.strip().lower() for p in platform.split(",") if p.strip()]
+            if len(plats) == 1:
+                conditions.append("LOWER(platform) = LOWER(%s)")
+                params.append(plats[0])
+            elif len(plats) > 1:
+                placeholders = ", ".join(["LOWER(%s)"] * len(plats))
+                conditions.append(f"LOWER(platform) IN ({placeholders})")
+                params.extend(plats)
 
         if eligibility and eligibility != "ALL":
             conditions.append("eligibility = %s")
@@ -220,12 +227,10 @@ class DashboardQueryService:
             conditions.append("user_status = %s::user_application_status_enum")
             params.append(user_status.upper().strip())
 
-        # Posted Within filter
-        # Mapping windows to days:
-        # "Last 24 hours" -> 1 day, "Last 3 days" -> 3 days, "Last 7 days" -> 7 days,
-        # "Last 14 days" -> 14 days, "Last 30 days" -> 30 days.
+        # Posted Within filter (by company / job board)
         posted_window_days_map = {
             "last 24 hours": 1,
+            "today": 1,
             "last 3 days": 3,
             "last 7 days": 7,
             "last 14 days": 14,
@@ -233,9 +238,7 @@ class DashboardQueryService:
         }
         if posted_within and posted_within.strip().lower() in posted_window_days_map:
             days = posted_window_days_map[posted_within.strip().lower()]
-            # Safe parameterized interval: cast %s to integer for interval multiplication
             if include_unknown_dates:
-                # Include listings with valid dates within window OR listings with unknown/missing dates
                 conditions.append("""
                     (
                         (posted_date IS NOT NULL 
@@ -245,13 +248,26 @@ class DashboardQueryService:
                     )
                 """)
             else:
-                # Strictly verified dates within window only
                 conditions.append("""
                     posted_date IS NOT NULL 
                     AND posted_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' 
                     AND TO_DATE(SUBSTRING(posted_date FROM 1 FOR 10), 'YYYY-MM-DD') >= CURRENT_DATE - (%s * INTERVAL '1 day')
                 """)
             params.append(days)
+
+        # Fetched / Discovered Within filter (by our ingestion pipeline)
+        fetched_window_days_map = {
+            "today": 1,
+            "last 24 hours": 1,
+            "last 3 days": 3,
+            "last 7 days": 7,
+            "last 14 days": 14,
+            "last 30 days": 30,
+        }
+        if fetched_within and fetched_within.strip().lower() in fetched_window_days_map:
+            f_days = fetched_window_days_map[fetched_within.strip().lower()]
+            conditions.append("discovered_at >= NOW() - (%s * INTERVAL '1 day')")
+            params.append(f_days)
 
         where_clause = ""
         if conditions:
@@ -260,12 +276,12 @@ class DashboardQueryService:
         # Safe sort mapping to prevent SQL injection
         direction = "ASC" if sort_order.upper() == "ASC" else "DESC"
         if sort_by == "newest":
-            # Sort newest posted first: parsed posted_date descending, unknown dates last, secondary sort by id ASC
             date_expr = "(CASE WHEN posted_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN TO_DATE(SUBSTRING(posted_date FROM 1 FOR 10), 'YYYY-MM-DD') ELSE NULL END)"
             order_clause = f"{date_expr} {direction} NULLS LAST, id ASC"
         elif sort_by == "ai_score":
-            # Sort by dedicated AI score descending, secondary by relevance_score, tertiary by id ASC
             order_clause = f"ai_score {direction} NULLS LAST, relevance_score {direction} NULLS LAST, id ASC"
+        elif sort_by in ("fetched", "date_fetched"):
+            order_clause = f"discovered_at {direction} NULLS LAST, id ASC"
         else:
             sort_map = {
                 "score": "relevance_score",
