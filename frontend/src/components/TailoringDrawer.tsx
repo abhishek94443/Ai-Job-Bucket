@@ -234,7 +234,7 @@ export function TailoringDrawer({ job, onClose }: TailoringDrawerProps) {
   const fb = result?.reviewer_feedback;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[620px] bg-zinc-950 border-l border-zinc-800 shadow-2xl flex flex-col z-50 animate-in slide-in-from-right duration-200">
+    <div className="fixed inset-0 z-50 md:inset-y-0 md:left-auto md:right-0 md:w-[620px] bg-zinc-950 border-t md:border-t-0 md:border-l border-zinc-800 shadow-2xl flex flex-col animate-in slide-in-from-bottom md:slide-in-from-right duration-200">
       {/* Drawer Header */}
       <div className="h-14 px-5 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-950/90">
         <div>

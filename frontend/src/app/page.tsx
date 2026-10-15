@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Sidebar, NavTab } from "@/components/Sidebar";
+import { MobileNav } from "@/components/MobileNav";
 import { JobDiscoveryView, JobItem } from "@/components/JobDiscoveryView";
 import { TailoringDrawer } from "@/components/TailoringDrawer";
 import { LatexWorkbenchView } from "@/components/LatexWorkbenchView";
@@ -52,8 +53,15 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
-      {/* Fixed Left Navigation Rail */}
+    <div className="flex flex-col md:flex-row h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
+      {/* Mobile Top Header & Bottom Thumb Nav Rail */}
+      <MobileNav
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        jobCount={jobs.length}
+      />
+
+      {/* Desktop Fixed Left Navigation Rail */}
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -61,7 +69,7 @@ export default function Home() {
       />
 
       {/* Main View Area */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex overflow-hidden pb-16 md:pb-0">
         {activeTab === "discovery" && (
           <JobDiscoveryView
             jobs={jobs}

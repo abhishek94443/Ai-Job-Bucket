@@ -21,7 +21,7 @@ export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) 
   ];
 
   return (
-    <aside className="w-64 border-r border-zinc-800 bg-zinc-950 flex flex-col justify-between shrink-0 h-screen select-none">
+    <aside className="hidden md:flex w-64 border-r border-zinc-800 bg-zinc-950 flex-col justify-between shrink-0 h-screen select-none">
       <div>
         {/* Workspace Brand Header */}
         <div className="h-14 px-4 border-b border-zinc-800 flex items-center justify-between">

@@ -157,8 +157,8 @@ export function JobDiscoveryView({
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden bg-zinc-950">
       {/* Top Header & Search Bar */}
-      <header className="h-14 px-6 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-950/90 backdrop-blur">
-        <div className="flex items-center gap-4 flex-1 max-w-xl">
+      <header className="h-auto md:h-14 px-3 md:px-6 py-2 md:py-0 border-b border-zinc-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 shrink-0 bg-zinc-950/90 backdrop-blur">
+        <div className="flex items-center gap-3 flex-1 max-w-xl">
           <div className="relative w-full">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input
@@ -171,9 +171,9 @@ export function JobDiscoveryView({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between md:justify-end gap-2 md:gap-3 overflow-x-auto">
           {/* Configurable Multi-Job Batch Controls */}
-          <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 text-xs">
+          <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 text-xs">
             <span className="text-[11px] font-mono text-zinc-500 uppercase">Jobs/Call:</span>
             <select
               value={jobsPerCall}
@@ -219,12 +219,11 @@ export function JobDiscoveryView({
             </button>
           </div>
 
-
           <button
             onClick={onRefresh}
             disabled={isLoading || isDiscovering}
             title="Refresh current jobs from database"
-            className="flex items-center justify-center p-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-colors disabled:opacity-50"
+            className="flex items-center justify-center p-2 md:p-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading && !isDiscovering ? "animate-spin" : ""}`} />
           </button>
@@ -232,7 +231,7 @@ export function JobDiscoveryView({
           <button
             onClick={handleTriggerDiscovery}
             disabled={isDiscovering || isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition-colors disabled:opacity-50 shrink-0"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isDiscovering ? "animate-spin text-emerald-400" : ""}`} />
             <span>{isDiscovering ? "Discovering..." : "Discover Pipeline"}</span>
@@ -242,7 +241,7 @@ export function JobDiscoveryView({
 
       {/* Notification Banner */}
       {enrichStatusMsg && (
-        <div className="px-6 py-2 bg-emerald-950/40 border-b border-emerald-800/40 text-emerald-300 text-xs font-mono flex items-center justify-between">
+        <div className="px-4 md:px-6 py-2 bg-emerald-950/40 border-b border-emerald-800/40 text-emerald-300 text-xs font-mono flex items-center justify-between">
           <span>{enrichStatusMsg}</span>
           <button
             onClick={() => setEnrichStatusMsg(null)}
@@ -254,7 +253,7 @@ export function JobDiscoveryView({
       )}
 
       {/* Filter Chips Bar */}
-      <div className="px-6 py-2.5 border-b border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400 bg-zinc-950/60">
+      <div className="px-3 md:px-6 py-2.5 border-b border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400 bg-zinc-950/60 overflow-x-auto">
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-mono uppercase text-zinc-400 font-medium">Filter:</span>
           <button

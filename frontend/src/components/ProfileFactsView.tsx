@@ -303,14 +303,14 @@ export function ProfileFactsView() {
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden bg-zinc-950">
       {/* Top Header */}
-      <header className="h-14 px-6 border-b border-zinc-800 flex items-center justify-between shrink-0 bg-zinc-950/90">
+      <header className="h-auto md:h-14 px-4 md:px-6 py-2.5 md:py-0 border-b border-zinc-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 shrink-0 bg-zinc-950/90">
         <div className="flex items-center gap-3">
           <User className="w-4 h-4 text-emerald-400" />
           <span className="font-semibold text-sm text-zinc-100">Candidate Ground Truth &amp; Project Vault</span>
-          <span className="text-[11px] font-mono text-zinc-500">Dual Onboarding (Resume Upload &amp; Visual Editor)</span>
+          <span className="hidden lg:inline text-[11px] font-mono text-zinc-500">Dual Onboarding (Resume Upload &amp; Visual Editor)</span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto w-full md:w-auto">
           <button
             onClick={() => setActiveTab("edit")}
             className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${
