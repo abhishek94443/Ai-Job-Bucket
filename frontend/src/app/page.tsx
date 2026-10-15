@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Sidebar, NavTab } from "@/components/Sidebar";
+import React, { useState, useEffect, useCallback } from "react";
+import { Sidebar, NavTab, SystemStatus } from "@/components/Sidebar";
 import { MobileNav } from "@/components/MobileNav";
 import { JobDiscoveryView, JobItem } from "@/components/JobDiscoveryView";
 import { TailoringDrawer } from "@/components/TailoringDrawer";
@@ -15,6 +15,37 @@ export default function Home() {
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [selectedJobForTailoring, setSelectedJobForTailoring] = useState<JobItem | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>("connecting");
+
+  // Health check against FastAPI /api/health to track Render reachability
+  const checkHealth = useCallback(async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch("/api/health", {
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === "healthy") {
+          setSystemStatus("online");
+          return;
+        }
+      }
+      setSystemStatus("offline");
+    } catch {
+      setSystemStatus("offline");
+    }
+  }, []);
+
+  useEffect(() => {
+    checkHealth();
+    // Poll every 25 seconds: keeps status fresh and maintains active session
+    const interval = setInterval(checkHealth, 25000);
+    return () => clearInterval(interval);
+  }, [checkHealth]);
 
   // Fetch jobs from FastAPI backend
   const fetchJobs = async () => {
@@ -59,6 +90,7 @@ export default function Home() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         jobCount={jobs.length}
+        systemStatus={systemStatus}
       />
 
       {/* Desktop Fixed Left Navigation Rail */}
@@ -66,6 +98,7 @@ export default function Home() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         jobCount={jobs.length}
+        systemStatus={systemStatus}
       />
 
       {/* Main View Area */}

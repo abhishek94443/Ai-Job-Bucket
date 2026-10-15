@@ -4,14 +4,16 @@ import React from "react";
 import { Search, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck, Zap } from "lucide-react";
 
 export type NavTab = "discovery" | "tracker" | "profile" | "automation" | "models";
+export type SystemStatus = "online" | "connecting" | "offline";
 
 interface SidebarProps {
   activeTab: NavTab;
   onTabChange: (tab: NavTab) => void;
   jobCount?: number;
+  systemStatus?: SystemStatus;
 }
 
-export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, jobCount = 0, systemStatus = "connecting" }: SidebarProps) {
   const navItems = [
     { id: "discovery" as NavTab, label: "Discover Jobs", icon: Search, badge: jobCount > 0 ? `${jobCount}` : undefined },
     { id: "tracker" as NavTab, label: "Applications", icon: BookmarkCheck },
@@ -31,9 +33,31 @@ export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) 
               JOB BUCKET
             </span>
           </div>
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-800/60">
-            ONLINE
-          </span>
+          {systemStatus === "online" ? (
+            <span
+              title="Backend online and reachable"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              ONLINE
+            </span>
+          ) : systemStatus === "connecting" ? (
+            <span
+              title="Render container is waking up (cold boot in progress)"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              WAKING UP
+            </span>
+          ) : (
+            <span
+              title="System currently unreachable"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950/80 text-rose-300 border border-rose-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              OFFLINE
+            </span>
+          )}
         </div>
 
         {/* Navigation Section */}
@@ -81,8 +105,21 @@ export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) 
         </div>
         <div className="flex items-center justify-between text-zinc-400">
           <span>Verification</span>
-          <span className="text-emerald-400 flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3" /> Active
+          <span
+            className={
+              systemStatus === "online"
+                ? "text-emerald-400 flex items-center gap-1"
+                : systemStatus === "connecting"
+                ? "text-amber-400 flex items-center gap-1"
+                : "text-rose-400 flex items-center gap-1"
+            }
+          >
+            <ShieldCheck className="w-3 h-3" />
+            {systemStatus === "online"
+              ? "Active"
+              : systemStatus === "connecting"
+              ? "Connecting"
+              : "Unreachable"}
           </span>
         </div>
         <div className="pt-1 border-t border-zinc-900 flex items-center justify-between text-[10px] text-zinc-400">

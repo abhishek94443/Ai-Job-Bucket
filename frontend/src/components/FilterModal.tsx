@@ -312,9 +312,14 @@ export function FilterModal({
           </button>
           <button
             onClick={handleApply}
-            className="flex-1 max-w-sm py-2.5 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs tracking-tight transition-colors shadow-lg shadow-emerald-950/40"
+            className="flex-1 max-w-sm py-2.5 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs tracking-tight transition-colors shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-1.5"
           >
-            Show {totalMatching} Opportunities
+            <span>Apply Filters</span>
+            {activeCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-950 text-emerald-300">
+                ({activeCount})
+              </span>
+            )}
           </button>
         </div>
       </div>

@@ -9,10 +9,9 @@ import {
   Check,
   SlidersHorizontal,
   X,
-  Calendar,
-  Clock,
   ChevronRight,
   RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { FilterModal, FilterState } from "./FilterModal";
 import { PaginationBar } from "./PaginationBar";
@@ -59,6 +58,8 @@ export function JobDiscoveryView({
   const [totalPages, setTotalPages] = useState<number>(1);
   const [pagedJobs, setPagedJobs] = useState<JobItem[]>([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -122,8 +123,12 @@ export function JobDiscoveryView({
 
   // Fetch 20 paged jobs from backend with active filters
   const fetchJobs = useCallback(
-    async (targetPage = 1) => {
-      setIsLoadingJobs(true);
+    async (targetPage = 1, append = false) => {
+      if (append) {
+        setIsLoadingMore(true);
+      } else {
+        setIsLoadingJobs(true);
+      }
       try {
         const params = new URLSearchParams();
         params.set("page", String(targetPage));
@@ -154,7 +159,16 @@ export function JobDiscoveryView({
         const res = await fetch(`/api/jobs?${params.toString()}`);
         if (res.ok) {
           const data = await res.json();
-          setPagedJobs(data.jobs || []);
+          const incoming: JobItem[] = data.jobs || [];
+          if (append) {
+            setPagedJobs((prev) => {
+              const existingIds = new Set(prev.map((j) => j.id));
+              const fresh = incoming.filter((j) => !existingIds.has(j.id));
+              return [...prev, ...fresh];
+            });
+          } else {
+            setPagedJobs(incoming);
+          }
           setTotalJobs(data.total || 0);
           setTotalPages(data.total_pages || 1);
           setCurrentPage(data.page || targetPage);
@@ -163,21 +177,51 @@ export function JobDiscoveryView({
         console.error("Failed to fetch paged jobs:", err);
       } finally {
         setIsLoadingJobs(false);
+        setIsLoadingMore(false);
       }
     },
     [debouncedSearch, filters, pageSize]
   );
 
+  // Initial fetch and on filter/search change
   useEffect(() => {
-    fetchJobs(currentPage);
-  }, [fetchJobs, currentPage]);
+    fetchJobs(1, false);
+  }, [fetchJobs]);
 
   const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
+    fetchJobs(newPage, false);
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
+
+  const handleLoadMore = useCallback(() => {
+    if (isLoadingMore || isLoadingJobs) return;
+    if (currentPage >= totalPages) return;
+    fetchJobs(currentPage + 1, true);
+  }, [fetchJobs, currentPage, totalPages, isLoadingMore, isLoadingJobs]);
+
+  // Mobile / PWA IntersectionObserver for automatic infinite scroll
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isLoadingMore && !isLoadingJobs) {
+          handleLoadMore();
+        }
+      },
+      {
+        root: scrollContainerRef.current,
+        rootMargin: "250px",
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [handleLoadMore, isLoadingMore, isLoadingJobs]);
 
   const handleApplyFilters = (newFilters: FilterState) => {
     setFilters(newFilters);
@@ -194,16 +238,6 @@ export function JobDiscoveryView({
       sortBy: "ai_score",
     });
     setSearchQuery("");
-    setCurrentPage(1);
-  };
-
-  const handleRemoveSingleFilter = (key: keyof FilterState, val?: string) => {
-    setFilters((prev) => {
-      if (key === "platforms" && val) {
-        return { ...prev, platforms: prev.platforms.filter((p) => p !== val) };
-      }
-      return { ...prev, [key]: key === "sortBy" ? "ai_score" : null };
-    });
     setCurrentPage(1);
   };
 
@@ -303,39 +337,39 @@ export function JobDiscoveryView({
             )}
           </div>
 
-          {/* Integrated Filter Button with Active Badge */}
-          <button
-            onClick={() => setIsFilterModalOpen(true)}
-            aria-label="Open Filter Drawer"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border transition-colors shrink-0 ${
-              activeFilterCount > 0
-                ? "bg-emerald-950 text-emerald-300 border-emerald-700 font-semibold"
-                : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>Filter</span>
+          {/* Integrated Filter Button with Active Badge and Reset Cross */}
+          <div className="flex items-center shrink-0">
+            <button
+              onClick={() => setIsFilterModalOpen(true)}
+              aria-label="Open Filter Drawer"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
+                activeFilterCount > 0
+                  ? "bg-emerald-950 text-emerald-300 border-emerald-700 font-semibold rounded-r-none border-r-0"
+                  : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800"
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filter</span>
+              {activeFilterCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-900 text-emerald-200 border border-emerald-700 font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
             {activeFilterCount > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-900 text-emerald-200 border border-emerald-700 font-bold">
-                {activeFilterCount}
-              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResetFilters();
+                }}
+                title="Clear all filters and restore defaults"
+                aria-label="Clear all filters and restore defaults"
+                className="flex items-center justify-center px-2 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 hover:text-white border border-emerald-700 rounded-r border-l border-l-emerald-800/60 text-xs transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             )}
-          </button>
-        </div>
-
-        {/* Results Counter */}
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-mono text-zinc-400">
-            {isLoadingJobs ? (
-              <span className="text-zinc-500">Updating jobs...</span>
-            ) : totalJobs > 0 ? (
-              <>
-                <span className="text-zinc-200 font-semibold">{totalJobs}</span> total jobs
-              </>
-            ) : (
-              "0 jobs found"
-            )}
-          </span>
+          </div>
         </div>
       </header>
 
@@ -351,112 +385,6 @@ export function JobDiscoveryView({
           </button>
         </div>
       )}
-
-      {/* Active Filter Chips Strip & Pipeline Stats */}
-      <div className="px-3 md:px-6 py-2 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400 bg-zinc-950/60 overflow-x-auto">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-mono uppercase text-zinc-500 font-medium">Active:</span>
-
-          {activeFilterCount === 0 && !debouncedSearch ? (
-            <span className="text-[11px] font-mono text-zinc-500">All 20 results/page</span>
-          ) : null}
-
-          {/* Search Query Chip */}
-          {debouncedSearch && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-200 border border-zinc-700">
-              <span>&ldquo;{debouncedSearch}&rdquo;</span>
-              <button
-                onClick={() => setSearchQuery("")}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          )}
-
-          {/* Match Score Chip */}
-          {filters.minScore !== null && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-              <span>Score &gt;= {filters.minScore}%</span>
-              <button
-                onClick={() => handleRemoveSingleFilter("minScore")}
-                className="text-emerald-400 hover:text-white"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          )}
-
-          {/* Platform Chips */}
-          {filters.platforms.map((p) => (
-            <span
-              key={p}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono uppercase bg-zinc-900 text-zinc-200 border border-zinc-700"
-            >
-              <span>{p}</span>
-              <button
-                onClick={() => handleRemoveSingleFilter("platforms", p)}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-
-          {/* Date Posted Chip */}
-          {filters.postedWithin && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-200 border border-zinc-700">
-              <Calendar className="w-2.5 h-2.5 text-zinc-400" />
-              <span>Posted: {filters.postedWithin}</span>
-              <button
-                onClick={() => handleRemoveSingleFilter("postedWithin")}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          )}
-
-          {/* Date Fetched Chip */}
-          {filters.fetchedWithin && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-900 text-zinc-200 border border-zinc-700">
-              <Clock className="w-2.5 h-2.5 text-zinc-400" />
-              <span>Fetched: {filters.fetchedWithin}</span>
-              <button
-                onClick={() => handleRemoveSingleFilter("fetchedWithin")}
-                className="text-zinc-400 hover:text-white"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          )}
-
-          {/* Clear All Link */}
-          {(activeFilterCount > 0 || debouncedSearch) && (
-            <button
-              onClick={handleResetFilters}
-              className="text-[11px] font-mono text-zinc-500 hover:text-zinc-300 ml-1 underline"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-
-        {/* Pipeline Diagnostics Counter */}
-        <div className="flex items-center gap-2 font-mono text-[11px] text-zinc-400 shrink-0">
-          {pipelineStatus && (
-            <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 text-[10px]">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>{pipelineStatus.ai_enriched_count} Verified</span>
-              <span>•</span>
-              <span>{pipelineStatus.staged_count} Staged</span>
-            </div>
-          )}
-          <span className="text-zinc-400">
-            Total: <span className="text-zinc-200 font-semibold">{totalJobs}</span>
-          </span>
-        </div>
-      </div>
 
       {/* Main Job Cards Feed */}
       <div
@@ -629,16 +557,49 @@ export function JobDiscoveryView({
             );
           })
         )}
+
+        {/* Mobile / PWA Infinite Scroll & Append Feed Sentinel */}
+        <div className="md:hidden pt-3 pb-8">
+          {currentPage < totalPages ? (
+            <div ref={sentinelRef} className="flex flex-col items-center justify-center gap-2 py-4">
+              {isLoadingMore ? (
+                <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 py-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Loading more jobs...</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="w-full py-2.5 px-4 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 hover:border-zinc-700 font-mono text-xs font-medium flex items-center justify-center gap-2 transition-colors active:scale-[0.99]"
+                >
+                  <span>Load More Jobs</span>
+                  <span className="text-zinc-500 text-[11px]">
+                    ({pagedJobs.length} of {totalJobs})
+                  </span>
+                </button>
+              )}
+            </div>
+          ) : (
+            pagedJobs.length > 0 && (
+              <div className="text-center py-4 text-xs font-mono text-zinc-500 border-t border-zinc-900 mt-2">
+                All {totalJobs} jobs loaded
+              </div>
+            )
+          )}
+        </div>
       </div>
 
-      {/* Pagination Controls Bar (Strictly 20 results per page) */}
-      <PaginationBar
-        page={currentPage}
-        pageSize={pageSize}
-        total={totalJobs}
-        totalPages={totalPages}
-        onPageChange={handlePageChange}
-      />
+      {/* Pagination Controls Bar (Desktop only, strictly 20 results per page) */}
+      <div className="hidden md:block">
+        <PaginationBar
+          page={currentPage}
+          pageSize={pageSize}
+          total={totalJobs}
+          totalPages={totalPages}
+          onPageChange={handlePageChange}
+        />
+      </div>
 
       {/* Filter Modal / Bottom Sheet Component */}
       <FilterModal

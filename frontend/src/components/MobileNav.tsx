@@ -2,15 +2,21 @@
 
 import React from "react";
 import { Search, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck, Zap } from "lucide-react";
-import { NavTab } from "./Sidebar";
+import { NavTab, SystemStatus } from "./Sidebar";
 
 interface MobileNavProps {
   activeTab: NavTab;
   onTabChange: (tab: NavTab) => void;
   jobCount?: number;
+  systemStatus?: SystemStatus;
 }
 
-export function MobileNav({ activeTab, onTabChange, jobCount = 0 }: MobileNavProps) {
+export function MobileNav({
+  activeTab,
+  onTabChange,
+  jobCount = 0,
+  systemStatus = "connecting",
+}: MobileNavProps) {
   const navItems = [
     { id: "discovery" as NavTab, label: "Jobs", icon: Search, badge: jobCount > 0 ? `${jobCount}` : undefined },
     { id: "tracker" as NavTab, label: "Apps", icon: BookmarkCheck },
@@ -30,13 +36,29 @@ export function MobileNav({ activeTab, onTabChange, jobCount = 0 }: MobileNavPro
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-800/60">
-            <ShieldCheck className="w-2.5 h-2.5" />
-            ONLINE
-          </span>
-          {jobCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-900 text-zinc-400 border border-zinc-800">
-              {jobCount}
+          {systemStatus === "online" ? (
+            <span
+              title="Backend online and reachable"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              ONLINE
+            </span>
+          ) : systemStatus === "connecting" ? (
+            <span
+              title="Render container is waking up (cold boot in progress)"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              WAKING UP
+            </span>
+          ) : (
+            <span
+              title="System currently unreachable"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950/80 text-rose-300 border border-rose-800/60"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              OFFLINE
             </span>
           )}
         </div>
