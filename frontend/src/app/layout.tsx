@@ -21,8 +21,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Job Bucket // Executive Job Search & Application Workbench",
-  description: "Executive Software Engineering Discovery & 2-Agent Application Tailoring Platform",
+  title: "Job Bucket // Discovery, Applications & Tailoring Platform",
+  description: "Software Engineering Job Discovery, Tracking & Tailored Application Kits",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

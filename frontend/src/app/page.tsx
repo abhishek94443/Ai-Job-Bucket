@@ -5,7 +5,7 @@ import { Sidebar, NavTab } from "@/components/Sidebar";
 import { MobileNav } from "@/components/MobileNav";
 import { JobDiscoveryView, JobItem } from "@/components/JobDiscoveryView";
 import { TailoringDrawer } from "@/components/TailoringDrawer";
-import { LatexWorkbenchView } from "@/components/LatexWorkbenchView";
+import { AutomationView } from "@/components/AutomationView";
 import { ProfileFactsView } from "@/components/ProfileFactsView";
 import { ModelManagementView } from "@/components/ModelManagementView";
 import { TrackerView } from "@/components/TrackerView";
@@ -88,14 +88,14 @@ export default function Home() {
           />
         )}
 
-        {activeTab === "workbench" && <LatexWorkbenchView />}
-
         {activeTab === "profile" && <ProfileFactsView />}
+
+        {activeTab === "automation" && <AutomationView onJobsUpdated={fetchJobs} />}
 
         {activeTab === "models" && <ModelManagementView />}
       </main>
 
-      {/* 2-Agent Tailoring Drawer */}
+      {/* Tailoring Drawer */}
       <TailoringDrawer
         key={selectedJobForTailoring?.id ?? "closed"}
         job={selectedJobForTailoring}

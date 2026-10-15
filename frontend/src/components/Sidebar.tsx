@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { Search, FileCode2, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck } from "lucide-react";
+import { Search, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck, Zap } from "lucide-react";
 
-export type NavTab = "discovery" | "tracker" | "workbench" | "profile" | "models";
+export type NavTab = "discovery" | "tracker" | "profile" | "automation" | "models";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -13,11 +13,11 @@ interface SidebarProps {
 
 export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) {
   const navItems = [
-    { id: "discovery" as NavTab, label: "Job Discovery", icon: Search, badge: jobCount > 0 ? `${jobCount}` : undefined },
-    { id: "tracker" as NavTab, label: "Application Tracker", icon: BookmarkCheck },
-    { id: "workbench" as NavTab, label: "LaTeX Workbench", icon: FileCode2, badge: "v2.0" },
-    { id: "profile" as NavTab, label: "Candidate Profile", icon: UserCheck },
-    { id: "models" as NavTab, label: "AI Models & Quotas", icon: Cpu },
+    { id: "discovery" as NavTab, label: "Discover Jobs", icon: Search, badge: jobCount > 0 ? `${jobCount}` : undefined },
+    { id: "tracker" as NavTab, label: "Applications", icon: BookmarkCheck },
+    { id: "profile" as NavTab, label: "My Profile", icon: UserCheck },
+    { id: "automation" as NavTab, label: "Automation", icon: Zap },
+    { id: "models" as NavTab, label: "AI & Models", icon: Cpu },
   ];
 
   return (
@@ -26,9 +26,9 @@ export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) 
         {/* Workspace Brand Header */}
         <div className="h-14 px-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-zinc-400" />
-            <span className="font-mono text-xs tracking-wider uppercase text-zinc-200 font-semibold">
-              JOB_BUCKET // L7
+            <Terminal className="w-4 h-4 text-emerald-400" />
+            <span className="font-mono text-xs tracking-wider uppercase text-zinc-100 font-semibold">
+              JOB BUCKET
             </span>
           </div>
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-800/60">
@@ -80,13 +80,13 @@ export function Sidebar({ activeTab, onTabChange, jobCount = 0 }: SidebarProps) 
           <span className="text-zinc-300">FastAPI 2.0</span>
         </div>
         <div className="flex items-center justify-between text-zinc-400">
-          <span>Grounding</span>
+          <span>Verification</span>
           <span className="text-emerald-400 flex items-center gap-1">
             <ShieldCheck className="w-3 h-3" /> Active
           </span>
         </div>
         <div className="pt-1 border-t border-zinc-900 flex items-center justify-between text-[10px] text-zinc-400">
-          <span>Target: Abhishek Dwivedi</span>
+          <span>Profile: Abhishek Dwivedi</span>
           <span className="text-zinc-400">Java / K8s</span>
         </div>
       </div>

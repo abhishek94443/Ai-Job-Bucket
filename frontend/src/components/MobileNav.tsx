@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Search, FileCode2, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck } from "lucide-react";
+import { Search, UserCheck, Cpu, BookmarkCheck, Terminal, ShieldCheck, Zap } from "lucide-react";
 import { NavTab } from "./Sidebar";
 
 interface MobileNavProps {
@@ -13,10 +13,10 @@ interface MobileNavProps {
 export function MobileNav({ activeTab, onTabChange, jobCount = 0 }: MobileNavProps) {
   const navItems = [
     { id: "discovery" as NavTab, label: "Jobs", icon: Search, badge: jobCount > 0 ? `${jobCount}` : undefined },
-    { id: "tracker" as NavTab, label: "Tracker", icon: BookmarkCheck },
-    { id: "workbench" as NavTab, label: "LaTeX", icon: FileCode2 },
+    { id: "tracker" as NavTab, label: "Apps", icon: BookmarkCheck },
     { id: "profile" as NavTab, label: "Profile", icon: UserCheck },
-    { id: "models" as NavTab, label: "AI Quota", icon: Cpu },
+    { id: "automation" as NavTab, label: "Automation", icon: Zap },
+    { id: "models" as NavTab, label: "AI & Models", icon: Cpu },
   ];
 
   return (
@@ -26,7 +26,7 @@ export function MobileNav({ activeTab, onTabChange, jobCount = 0 }: MobileNavPro
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-emerald-400" />
           <span className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
-            JOB_BUCKET // PWA
+            JOB BUCKET
           </span>
         </div>
         <div className="flex items-center gap-2">

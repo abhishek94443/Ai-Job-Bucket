@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Job Bucket Executive Workbench",
+    name: "Job Bucket Professional",
     short_name: "JobBucket",
-    description: "Executive Job Search, Candidate Vault and 2-Agent Resume Tailoring Platform",
+    description: "Software Engineering Job Discovery, Applications & Tailored Job Kits",
     start_url: "/",
     display: "standalone",
     background_color: "#09090b",

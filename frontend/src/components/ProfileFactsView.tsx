@@ -17,6 +17,9 @@ import {
   FileText,
   AlertCircle,
   ExternalLink,
+  FileCode,
+  Download,
+  Copy,
 } from "lucide-react";
 
 interface ProjectItem {
@@ -44,7 +47,7 @@ interface EducationItem {
 
 export function ProfileFactsView() {
   const [profile, setProfile] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<"edit" | "preview" | "raw">("edit");
+  const [activeTab, setActiveTab] = useState<"edit" | "resume" | "preview" | "raw">("edit");
   const [profileMd, setProfileMd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -52,8 +55,27 @@ export function ProfileFactsView() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isCopiedLatex, setIsCopiedLatex] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyLatex = () => {
+    if (!profile?.master_latex_source) return;
+    navigator.clipboard.writeText(profile.master_latex_source);
+    setIsCopiedLatex(true);
+    setTimeout(() => setIsCopiedLatex(false), 2500);
+  };
+
+  const handleDownloadTex = () => {
+    const source = profile?.master_latex_source || "";
+    const blob = new Blob([source], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Abhishek_Dwivedi_Master_CV.tex";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const loadData = async () => {
     try {
@@ -295,7 +317,7 @@ export function ProfileFactsView() {
   if (!profile) {
     return (
       <div className="flex-1 flex items-center justify-center bg-zinc-950 font-mono text-xs text-zinc-500">
-        Loading candidate ground truth profile...
+        Loading candidate profile...
       </div>
     );
   }
@@ -306,34 +328,44 @@ export function ProfileFactsView() {
       <header className="h-auto md:h-14 px-4 md:px-6 py-2.5 md:py-0 border-b border-zinc-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-2 shrink-0 bg-zinc-950/90">
         <div className="flex items-center gap-3">
           <User className="w-4 h-4 text-emerald-400" />
-          <span className="font-semibold text-sm text-zinc-100">Candidate Ground Truth &amp; Project Vault</span>
-          <span className="hidden lg:inline text-[11px] font-mono text-zinc-500">Dual Onboarding (Resume Upload &amp; Visual Editor)</span>
+          <span className="font-semibold text-sm text-zinc-100">Candidate Profile &amp; Project Vault</span>
+          <span className="hidden lg:inline text-[11px] font-mono text-zinc-500">Personal Details, Master Resume &amp; Project Portfolio</span>
         </div>
 
         <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto w-full md:w-auto">
           <button
             onClick={() => setActiveTab("edit")}
-            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${
+            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
               activeTab === "edit"
                 ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            Visual Profile Editor
+            Profile Details
+          </button>
+          <button
+            onClick={() => setActiveTab("resume")}
+            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
+              activeTab === "resume"
+                ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Master Resume (LaTeX)
           </button>
           <button
             onClick={() => setActiveTab("preview")}
-            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${
+            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
               activeTab === "preview"
                 ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            AI Grounding Preview
+            AI Profile View
           </button>
           <button
             onClick={() => setActiveTab("raw")}
-            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${
+            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
               activeTab === "raw"
                 ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
                 : "text-zinc-400 hover:text-zinc-200"
@@ -345,10 +377,10 @@ export function ProfileFactsView() {
           <button
             onClick={() => handleSave()}
             disabled={isSaving}
-            className="flex items-center gap-1.5 ml-2 px-3.5 py-1.5 rounded bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 ml-2 px-3.5 py-1.5 rounded bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold transition-colors disabled:opacity-50 shrink-0"
           >
             {saveSuccess ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Save className="w-3.5 h-3.5" />}
-            <span>{isSaving ? "Saving..." : saveSuccess ? "Saved to Neon" : "Save Facts"}</span>
+            <span>{isSaving ? "Saving..." : saveSuccess ? "Saved" : "Save Profile"}</span>
           </button>
         </div>
       </header>
@@ -387,7 +419,7 @@ export function ProfileFactsView() {
                 </h4>
                 <p className="text-xs text-zinc-400 max-w-md">
                   Drop your PDF or DOCX resume here. Our engine extracts your contact info, project vault, work
-                  experience, and tech skills directly into your ground truth facts.
+                  experience, and tech skills directly into your candidate profile.
                 </p>
                 <button
                   type="button"
@@ -789,14 +821,82 @@ export function ProfileFactsView() {
                 className="flex items-center gap-2 px-6 py-2.5 rounded bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold transition-colors disabled:opacity-50"
               >
                 {saveSuccess ? <Check className="w-4 h-4 text-emerald-600" /> : <Save className="w-4 h-4" />}
-                <span>{isSaving ? "Saving..." : saveSuccess ? "Saved to Neon PostgreSQL" : "Save Profile Facts & Vault"}</span>
+                <span>{isSaving ? "Saving..." : saveSuccess ? "Saved to Database" : "Save Profile & Vault"}</span>
               </button>
+            </div>
+          </div>
+        ) : activeTab === "resume" ? (
+          <div className="max-w-5xl mx-auto space-y-4">
+            {/* Top Toolbar for LaTeX */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-zinc-900/60 border border-zinc-800 rounded-lg">
+              <div>
+                <div className="flex items-center gap-2 text-zinc-100 font-semibold text-xs">
+                  <FileCode className="w-4 h-4 text-emerald-400" />
+                  <span>Master LaTeX Resume Source</span>
+                </div>
+                <p className="text-[11px] text-zinc-400 mt-0.5">
+                  Your baseline ATS LaTeX resume template used as the source for all tailored applications.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadTex}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export .tex</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyLatex}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 transition-colors"
+                >
+                  {isCopiedLatex ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{isCopiedLatex ? "Copied" : "Copy Code"}</span>
+                </button>
+
+                <a
+                  href="https://www.overleaf.com/project"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-400 border border-emerald-800/80 transition-colors"
+                >
+                  <span>Open Overleaf</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
+
+            {/* LaTeX Code Editor */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden flex flex-col">
+              <div className="px-4 py-2 border-b border-zinc-800 bg-zinc-900/40 text-[11px] font-mono text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                <span>Source: master_resume.tex</span>
+                <span className="text-zinc-500 font-mono text-[10px]">
+                  {(profile?.master_latex_source || "").length} characters
+                </span>
+              </div>
+              <textarea
+                rows={22}
+                value={profile?.master_latex_source || ""}
+                onChange={(e) => {
+                  setProfile((prev: any) => ({
+                    ...prev,
+                    master_latex_source: e.target.value,
+                  }));
+                }}
+                placeholder="Paste or write LaTeX moderncv / article resume code here..."
+                className="w-full p-4 bg-transparent font-mono text-xs leading-relaxed text-zinc-200 placeholder-zinc-600 resize-y focus:outline-none"
+                spellCheck={false}
+              />
             </div>
           </div>
         ) : activeTab === "preview" ? (
           <div className="max-w-4xl mx-auto space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-mono text-zinc-400">Ground Truth Profile Preview (01-candidate-profile.md)</span>
+              <span className="text-xs font-mono text-zinc-400">AI Profile Facts Preview (Used for Tailoring &amp; Grounding)</span>
             </div>
 
             <pre className="p-4 bg-zinc-900 border border-zinc-800 rounded text-xs font-mono text-zinc-300 overflow-x-auto leading-relaxed">

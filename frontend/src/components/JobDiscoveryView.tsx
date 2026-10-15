@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Search,
-  RefreshCw,
   Sparkles,
   ExternalLink,
   Bookmark,
@@ -12,6 +11,8 @@ import {
   X,
   Calendar,
   Clock,
+  ChevronRight,
+  RefreshCw,
 } from "lucide-react";
 import { FilterModal, FilterState } from "./FilterModal";
 import { PaginationBar } from "./PaginationBar";
@@ -322,72 +323,19 @@ export function JobDiscoveryView({
           </button>
         </div>
 
-        {/* Desktop Pipeline & Batch Actions */}
-        <div className="flex items-center justify-between md:justify-end gap-2 md:gap-3 overflow-x-auto">
-          {/* Configurable Multi-Job Batch Controls */}
-          <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 text-xs">
-            <span className="text-[11px] font-mono text-zinc-500 uppercase">Jobs/Call:</span>
-            <select
-              value={jobsPerCall}
-              onChange={(e) => setJobsPerCall(Number(e.target.value))}
-              disabled={isEnriching}
-              className="bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-700"
-            >
-              <option value={1}>1 Job / Call</option>
-              <option value={2}>2 Jobs / Call</option>
-            </select>
-
-            <span className="text-[11px] font-mono text-zinc-500 uppercase ml-1">Parallel:</span>
-            <select
-              value={concurrency}
-              onChange={(e) => setConcurrency(Number(e.target.value))}
-              disabled={isEnriching}
-              className="bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-zinc-700"
-            >
-              <option value={1}>1 Worker</option>
-              <option value={2}>2 Workers</option>
-            </select>
-
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-950 text-zinc-400 border border-zinc-800">
-              {jobsPerCall * concurrency} Jobs/wave
-            </span>
-
-            <button
-              onClick={handleEnrichBatch}
-              disabled={isEnriching || (pipelineStatus?.staged_count === 0 && pipelineStatus?.quota_held_count === 0)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ml-1"
-            >
-              {isEnriching ? (
-                <>
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                  <span>Enriching...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3 h-3 text-emerald-400" />
-                  <span>Enrich Staged</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <button
-            onClick={() => fetchJobs(currentPage)}
-            disabled={isLoadingJobs || isDiscovering}
-            title="Refresh current jobs from database"
-            className="flex items-center justify-center p-2 md:p-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingJobs && !isDiscovering ? "animate-spin" : ""}`} />
-          </button>
-
-          <button
-            onClick={handleTriggerDiscovery}
-            disabled={isDiscovering || isLoadingJobs}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition-colors disabled:opacity-50 shrink-0"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isDiscovering ? "animate-spin text-emerald-400" : ""}`} />
-            <span>{isDiscovering ? "Discovering..." : "Discover Pipeline"}</span>
-          </button>
+        {/* Results Counter */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-mono text-zinc-400">
+            {isLoadingJobs ? (
+              <span className="text-zinc-500">Updating jobs...</span>
+            ) : totalJobs > 0 ? (
+              <>
+                <span className="text-zinc-200 font-semibold">{totalJobs}</span> total jobs
+              </>
+            ) : (
+              "0 jobs found"
+            )}
+          </span>
         </div>
       </header>
 
@@ -536,6 +484,10 @@ export function JobDiscoveryView({
         ) : (
           pagedJobs.map((job) => {
             const score = job.ai_score ?? job.relevance_score ?? 0;
+            const isAiEnriched =
+              job.enrichment_status === "AI_ENRICHED" ||
+              (job.ai_score !== undefined && job.ai_score !== null);
+
             return (
               <div
                 key={job.id}
@@ -543,20 +495,20 @@ export function JobDiscoveryView({
                 className="group p-3.5 md:p-4 rounded-lg bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700 transition-all cursor-pointer space-y-2.5"
               >
                 {/* Job Card Header */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-0.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1 min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-sm text-zinc-100 group-hover:text-emerald-400 transition-colors">
+                      <h3 className="font-semibold text-sm text-zinc-100 group-hover:text-emerald-400 transition-colors truncate">
                         {job.title}
                       </h3>
                       {job.platform && (
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-zinc-800 text-zinc-400 border border-zinc-700/60">
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono uppercase bg-zinc-800 text-zinc-400 border border-zinc-700/60 shrink-0">
                           {job.platform}
                         </span>
                       )}
                     </div>
                     <div className="text-xs text-zinc-400 font-mono flex items-center gap-2 flex-wrap">
-                      <span>{job.company}</span>
+                      <span className="text-zinc-300 font-medium">{job.company}</span>
                       <span>•</span>
                       <span>{job.location || "Remote / Location Unspecified"}</span>
                       {job.posted_date && (
@@ -565,12 +517,62 @@ export function JobDiscoveryView({
                           <span className="text-zinc-500">Posted: {job.posted_date.slice(0, 10)}</span>
                         </>
                       )}
+                      {/* Inline verification status for all screens */}
+                      <span className="text-zinc-600">•</span>
+                      <span
+                        className={`font-medium ${
+                          isAiEnriched ? "text-emerald-400" : "text-zinc-500"
+                        }`}
+                      >
+                        {isAiEnriched ? "AI Verified" : "Keyword Match"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Score Pill & Bookmark */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="flex flex-col items-end">
+                  {/* Desktop Right Side Actions (Same Height h-8, perfectly aligned) */}
+                  <div className="hidden md:flex items-center gap-2 shrink-0">
+                    <div
+                      className={`h-8 flex items-center px-2.5 rounded-md border font-mono text-xs font-semibold mr-1.5 ${
+                        score >= 80
+                          ? "bg-emerald-950/80 text-emerald-400 border-emerald-800"
+                          : score >= 60
+                          ? "bg-amber-950/80 text-amber-400 border-amber-800"
+                          : "bg-zinc-900 text-zinc-400 border-zinc-800"
+                      }`}
+                    >
+                      {score}% MATCH
+                    </div>
+
+                    {job.url && (
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-8 flex items-center gap-1.5 px-3 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-medium border border-zinc-700/80 transition-colors"
+                        title="Apply directly on company portal"
+                      >
+                        <span>Apply</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+                      </a>
+                    )}
+
+                    <button
+                      onClick={(e) => handleTrack(e, job.id)}
+                      title="Save to Applications Tracker"
+                      className="h-8 w-8 flex items-center justify-center rounded-md bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 border border-zinc-800 transition-colors"
+                    >
+                      {trackedMap[job.id] ? (
+                        <Check className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <Bookmark className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Mobile / PWA Right Side (Clean Vertical Column) */}
+                  <div className="flex md:hidden flex-col items-end gap-2 shrink-0">
+                    <div className="flex items-center gap-1.5">
                       <div
                         className={`font-mono text-xs font-semibold px-2 py-0.5 rounded border ${
                           score >= 80
@@ -582,24 +584,31 @@ export function JobDiscoveryView({
                       >
                         {score}% MATCH
                       </div>
-                      <span className="text-[10px] font-mono font-medium text-zinc-500">
-                        {job.enrichment_status === "AI_ENRICHED" || (job.ai_score !== undefined && job.ai_score !== null)
-                          ? "AI Verified"
-                          : "Deterministic"}
-                      </span>
+                      <button
+                        onClick={(e) => handleTrack(e, job.id)}
+                        title="Save to Applications Tracker"
+                        className="p-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100"
+                      >
+                        {trackedMap[job.id] ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Bookmark className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                     </div>
 
-                    <button
-                      onClick={(e) => handleTrack(e, job.id)}
-                      title="Save to Applications Tracker"
-                      className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 transition-colors"
-                    >
-                      {trackedMap[job.id] ? (
-                        <Check className="w-4 h-4 text-emerald-400" />
-                      ) : (
-                        <Bookmark className="w-4 h-4" />
-                      )}
-                    </button>
+                    {job.url && (
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700/80 transition-colors"
+                      >
+                        <span>Apply</span>
+                        <ExternalLink className="w-3 h-3 text-zinc-400" />
+                      </a>
+                    )}
                   </div>
                 </div>
 
@@ -616,37 +625,6 @@ export function JobDiscoveryView({
                     ))}
                   </div>
                 )}
-
-                {/* Footer Action Bar */}
-                <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between text-[11px] text-zinc-400">
-                  <span className="font-mono text-zinc-500 text-[10px] hidden sm:inline">
-                    Grounding verified: Draft ⊆ Profile
-                  </span>
-                  <div className="flex items-center gap-2 ml-auto">
-                    {job.url && (
-                      <a
-                        href={job.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-zinc-500 hover:text-zinc-300 flex items-center gap-1"
-                      >
-                        <span>Original</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectJobForTailoring(job);
-                      }}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-medium transition-colors"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      <span>Open 2-Agent Tailor</span>
-                    </button>
-                  </div>
-                </div>
               </div>
             );
           })
