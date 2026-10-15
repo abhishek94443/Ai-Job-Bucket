@@ -247,6 +247,7 @@ def track_job(job_id: int, req: TrackJobRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/pipeline/discover")
 @app.post("/api/jobs/discover")
 async def trigger_discovery_pipeline(background_tasks: BackgroundTasks):
     from src.pipeline import run_pipeline
