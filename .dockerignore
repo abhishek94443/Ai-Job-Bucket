@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.playwright-mcp/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+scratch/
+docs/
