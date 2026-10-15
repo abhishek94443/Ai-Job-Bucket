@@ -1,5 +1,5 @@
 """
-Job Bucket — Headless REST & Decoupled Backend API Server
+Job Bucket - Headless REST & Decoupled Backend API Server
 Provides high-performance, asynchronous REST endpoints for:
 1. Job Discovery & Tracking (Filtering, search, status updates)
 2. 2-Agent Tailoring Engine (Drafter + Reviewer Grounding Audit)
@@ -18,7 +18,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, status
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,7 @@ from src.agentic_tailoring_service import AgenticTailoringEngine, load_prompt_fi
 from src.pdf_compiler import PDFCompilationEngine
 from src.ai_gateway import AIGateway
 from src.env_manager import EnvKeyManager
+from src.resume_parser import ResumeParser, ResumeParseError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("job_bucket_api")
@@ -392,6 +393,61 @@ def get_candidate_profile_markdown(masked: Optional[bool] = Query(None)):
     return {"markdown": md}
 
 
+@app.post("/api/profile/upload-resume")
+async def upload_candidate_resume(file: UploadFile = File(...)):
+    """
+    Ingests PDF, DOCX, or text resume file, extracts structured profile facts,
+    and updates the active candidate master profile.
+    """
+    try:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty (0 bytes).")
+
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in [".pdf", ".docx", ".txt"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format '{ext}'. Please upload a PDF (.pdf), Word document (.docx), or plain text resume.",
+            )
+
+        if ext == ".txt":
+            raw_text = content.decode("utf-8", errors="ignore")
+        else:
+            parse_result = ResumeParser.parse_bytes(content, file.filename or "resume.pdf")
+            raw_text = parse_result.extracted_text
+
+        if not raw_text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract readable text from resume.")
+
+        # Structured extraction (AI + heuristic fallback)
+        extracted = ResumeParser.extract_structured_profile(raw_text, ai_gateway=ai_gateway)
+
+        # Merge with existing master_latex_source if already present
+        existing_profile = profile_svc.get_active_profile()
+        if existing_profile and existing_profile.get("master_latex_source"):
+            extracted["master_latex_source"] = existing_profile["master_latex_source"]
+
+        # Persist to database
+        success = profile_svc.update_profile(extracted)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save extracted profile to database.")
+
+        return {
+            "status": "success",
+            "message": f"Successfully parsed {len(extracted.get('projects', []))} projects and {len(extracted.get('work_history', []))} experiences.",
+            "profile": extracted,
+        }
+    except ResumeParseError as e:
+        logger.error(f"Resume parsing validation failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to process resume upload: {e}")
+        raise HTTPException(status_code=500, detail=f"Resume processing error: {str(e)}")
+
+
 # -------------------------------------------------------------------------
 # LaTeX PDF Compilation Endpoints
 # -------------------------------------------------------------------------
@@ -430,7 +486,7 @@ def download_pdf(req: CompilePdfRequest):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=Abhishek_Dwivedi_Resume.pdf"},
+        headers={"Content-Disposition": "attachment; filename=Tailored_Resume.pdf"},
     )
 
 

@@ -1,5 +1,5 @@
 """
-Job Bucket — 2-Agent Tailoring Engine (Drafter + Reviewer)
+Job Bucket - 2-Agent Tailoring Engine (Drafter + Reviewer)
 Faithfully implements the 2-agent architecture from .claude/commands/apply.md.
 
 Architecture:
@@ -107,6 +107,60 @@ class AgenticTailoringEngine:
         self.cv_templates_rules = load_prompt_file("05-cv-templates.md")
         self.app_forms_rules = load_prompt_file("08-application-forms.md")
 
+    @staticmethod
+    def rank_and_select_projects(
+        projects: List[Dict[str, Any]],
+        job_desc: str,
+        top_k: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """
+        Intelligently ranks candidate projects against the target job posting based on
+        technical stack overlap, architectural relevance, and keyword synergy.
+        Returns the top_k (default 2) best-fit projects for ATS resume inclusion.
+        """
+        if not projects:
+            return []
+        if len(projects) <= top_k:
+            return projects
+
+        job_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-\.+#]{2,}\b", job_desc.lower()))
+        high_value_keywords = {
+            "python", "java", "golang", "c++", "rust", "javascript", "typescript",
+            "react", "vue", "angular", "nextjs", "next.js", "nodejs", "node",
+            "fastapi", "flask", "django", "spring", "springboot", "spring boot",
+            "postgresql", "postgres", "mysql", "mongodb", "redis", "dynamodb",
+            "docker", "kubernetes", "k8s", "aws", "gcp", "azure", "terraform",
+            "kafka", "rabbitmq", "activemq", "grpc", "rest", "graphql", "microservices",
+            "ci/cd", "ci", "cd", "pipeline", "batch", "streaming", "airflow",
+            "spark", "hadoop", "elasticsearch", "sql", "nosql", "git", "linux",
+        }
+
+        scored: List[Tuple[float, int, Dict[str, Any]]] = []
+        for idx, proj in enumerate(projects):
+            name = (proj.get("name") or "").lower()
+            stack = (proj.get("tech_stack") or "").lower()
+            bullets = " ".join(proj.get("bullets") or []).lower()
+            combined_text = f"{name} {stack} {bullets}"
+
+            proj_tokens = set(re.findall(r"\b[a-zA-Z0-9_\-\.+#]{2,}\b", combined_text))
+            overlap = proj_tokens.intersection(job_tokens)
+
+            score = 0.0
+            for token in overlap:
+                if token in high_value_keywords:
+                    score += 3.0
+                else:
+                    score += 1.0
+
+            for token in re.findall(r"\b[a-zA-Z0-9_\-\.+#]{2,}\b", stack):
+                if token in job_tokens:
+                    score += 2.0
+
+            scored.append((score, -idx, proj))
+
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [item[2] for item in scored[:top_k]]
+
     def run_workflow(
         self,
         job: Dict[str, Any],
@@ -126,6 +180,7 @@ class AgenticTailoringEngine:
 
         # 1. Retrieve candidate ground truth facts and master template
         profile_md, _, master_latex = self.profile_svc.get_masked_context_for_ai()
+        active_profile = self.profile_svc.get_active_profile()
 
         if prefer_ai:
             try:
@@ -136,6 +191,7 @@ class AgenticTailoringEngine:
                     job_desc=job_desc,
                     profile_md=profile_md,
                     master_latex=master_latex,
+                    active_profile=active_profile,
                 )
 
                 # Agent 2: Reviewer
@@ -194,22 +250,45 @@ class AgenticTailoringEngine:
         job_desc: str,
         profile_md: str,
         master_latex: str,
+        active_profile: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Invokes Agent 1 (Drafter) following Step 2 of apply.md.
         Employs dual-block structure (<METADATA> and <TAILORED_LATEX>) to avoid
         JSON backslash escaping failures for raw LaTeX content.
+        Dynamically analyzes candidate's project vault and recommends the top best-fit projects.
         """
+        top_projects_section = ""
+        if active_profile and active_profile.get("projects"):
+            projects_list = active_profile.get("projects", [])
+            if isinstance(projects_list, str):
+                try:
+                    projects_list = json.loads(projects_list)
+                except Exception:
+                    projects_list = []
+            top_projects = self.rank_and_select_projects(projects_list, job_desc, top_k=2)
+            if top_projects:
+                top_projects_section = "\nRECOMMENDED BEST-FIT PROJECTS (Handpicked from Candidate Project Vault for this Role):\n"
+                for p in top_projects:
+                    top_projects_section += f"- Project: {p.get('name')}\n  Tech Stack: {p.get('tech_stack', '')}\n  Key Bullets: {'; '.join(p.get('bullets', [])[:2])}\n"
+
         prompt = f"""You are the DRAFTER Agent in a two-agent job application system.
 You are tailoring an engineering job application for {job_title} at {company}.
 
 CRITICAL STYLE RULES (from 03-writing-style.md):
-1. NO em-dashes ('—' or '--'). Use commas, periods, or active phrasing.
+1. NO em-dashes ('--' or unicode \\u2014). Use commas, periods, or active phrasing.
 2. NO cliches or buzzwords ('passionate about', 'hit the ground running', 'seasoned professional', 'synergy').
 3. NO apologetic or overly humble language.
 4. Active voice, forward-looking, problem-solving engineering framing.
 5. FACTUAL GROUNDING: Every bullet and claim MUST be grounded strictly in the Candidate Profile facts below.
    NEVER invent or fabricate technologies, credentials, dates, or metrics.
+
+PROJECT VAULT HANDPICKING DIRECTIVE:
+The candidate maintains a portfolio/vault of projects in their profile facts.
+{top_projects_section}
+For the resume LaTeX \\section{{Projects}} block, hand-pick and feature ONLY the top 1 or 2 best-fit projects (such as those recommended above) that best match this role.
+Tailor each selected project's bullets to highlight the exact tech stack overlap with {company}'s requirements.
+Do NOT include more than 2 projects to maintain strict 2-page ATS compliance.
 
 CANDIDATE FACTS (01-candidate-profile.md format):
 {profile_md}
@@ -372,7 +451,7 @@ CRITICAL AUDIT DIRECTIVES:
    A claim is grounded if and only if the Candidate Profile supports it.
    Any ungrounded claim or fabricated technology MUST be flagged as an edit with "reason": "grounding".
 2. NEGATIVE STYLE CONSTRAINTS (03-writing-style.md):
-   - Check for em-dashes ('—' or '--'). Flag and replace with commas or periods.
+   - Check for em-dashes ('--' or unicode \\u2014). Flag and replace with commas or periods.
    - Check for forbidden buzzwords ("passionate about", "synergy", "hit the ground running", etc.).
 3. Produce feedback in TWO PARTS:
    Part A: JSON array of concrete string replacements:
@@ -478,9 +557,9 @@ Respond ONLY with valid JSON in this schema:
             bullets = updated_bullets
 
         # Enforce negative constraints cleanly
-        cv_text = cv_text.replace("—", "--").replace("–", "--")
-        pitch_text = pitch_text.replace("—", ", ").replace("--", ", ")
-        outreach_text = outreach_text.replace("—", ", ").replace("--", ", ")
+        cv_text = cv_text.replace("\u2014", "--").replace("\u2013", "--")
+        pitch_text = pitch_text.replace("\u2014", ", ").replace("--", ", ")
+        outreach_text = outreach_text.replace("\u2014", ", ").replace("--", ", ")
 
         return cv_text, pitch_text, bullets, outreach_text
 
@@ -502,40 +581,98 @@ Respond ONLY with valid JSON in this schema:
         job_title = job.get("title", "Backend Software Engineer")
         company = job.get("company", "Target Company")
 
-        # Verified bullets from Abhishek Dwivedi's master profile
-        verified_bullets = [
-            "Architected a PAIN001 SWIFT CBPR+ payment ingestion pipeline handling up to 100K transactions per file via JMS and Spring Batch.",
-            "Migrated legacy IBAN account-opening flows to Kubernetes microservices using ActiveMQ and the Strangler Fig pattern for incremental brownfield migration.",
-            "Engineered Javassist dynamic proxies to runtime-switch datasources for downstream database writes without legacy WebLogic dependencies.",
-            "Engineered application-level multi-tenancy using ThreadLocal-based TenantContext and PostgreSQL Row-Level Security with zero cross-tenant leakage.",
-        ]
+        # Retrieve active candidate profile
+        profile = kwargs.get("active_profile") or kwargs.get("profile") or self.profile_svc.get_active_profile()
+        candidate_name = profile.get("candidate_name") or "Abhishek Dwivedi"
 
-        # Forward-looking problem-solving cover pitch (3 paragraphs, NO em-dashes, NO cliches)
-        cover_pitch = (
-            f"I am writing to express my strong interest in the {job_title} role at {company}. "
-            "My background centers on architecting resilient backend systems, microservices migrations, "
-            "and mission-critical payment processing pipelines in production environments.\n\n"
-            "At TCS BaNCS (PostFinance AG), I spearheaded the migration of legacy WebLogic architectures "
-            "to containerized Kubernetes services, engineered SOAP-to-REST translation layers, and built "
-            "high-throughput SWIFT ingestion pipelines processing up to 100K transactions per batch. "
-            "This experience enables me to directly tackle distributed systems challenges, API latency, "
-            f"and reliable database throughput for {company}'s backend services.\n\n"
-            f"I look forward to discussing how my experience with Spring Boot, Kubernetes, and distributed event architectures "
-            f"can contribute to the engineering goals at {company}."
-        )
+        raw_projects = profile.get("projects") or []
+        if isinstance(raw_projects, str):
+            try:
+                raw_projects = json.loads(raw_projects)
+            except Exception:
+                raw_projects = []
 
-        portal_bio = (
-            f"Backend Software Engineer with production experience in distributed architectures, "
-            f"high-throughput payment pipelines, and microservices modernization. Specializing in Java, "
-            f"Spring Boot, Kubernetes, and PostgreSQL, with a proven track record delivering mission-critical "
-            f"financial flows and multi-tenant architectures."
-        )
+        raw_work = profile.get("work_history") or []
+        if isinstance(raw_work, str):
+            try:
+                raw_work = json.loads(raw_work)
+            except Exception:
+                raw_work = []
 
-        portal_achievement = (
-            "Architected a PAIN001 SWIFT CBPR+ payment ingestion pipeline handling up to 100K transactions per file "
-            "at PostFinance AG. Implemented MD5 deduplication, XML schema validation, and Spring Batch processing, "
-            "ensuring zero data loss and automated rejection of invalid transaction requests."
-        )
+        top_projects = self.rank_and_select_projects(raw_projects, f"{job_title} {company}", top_k=2)
+
+        # Dynamic bullets from user profile if customized candidate profile
+        dynamic_bullets: List[str] = []
+        if candidate_name != "Abhishek Dwivedi" and (raw_work or top_projects):
+            for w in raw_work:
+                for b in w.get("bullets", [])[:2]:
+                    if b and b not in dynamic_bullets:
+                        clean_b = b.replace("\u2014", ", ").replace("--", ", ")
+                        dynamic_bullets.append(clean_b)
+            for p in top_projects:
+                for b in p.get("bullets", [])[:2]:
+                    if b and b not in dynamic_bullets:
+                        clean_b = b.replace("\u2014", ", ").replace("--", ", ")
+                        dynamic_bullets.append(clean_b)
+
+        if len(dynamic_bullets) >= 3:
+            verified_bullets = dynamic_bullets[:4]
+            primary_comp = raw_work[0].get("company", "previous engineering roles") if raw_work else "previous engineering roles"
+            project_highlight = f" Through projects such as {top_projects[0].get('name')}, I engineered robust implementations with {top_projects[0].get('tech_stack', 'modern stacks')}." if top_projects else ""
+            
+            cover_pitch = (
+                f"I am writing to express my strong interest in the {job_title} role at {company}. "
+                "My background centers on architecting resilient backend systems, microservices migrations, "
+                f"and scalable engineering solutions in production environments.\n\n"
+                f"At {primary_comp}, I delivered mission-critical flows, optimized service performance, and collaborated "
+                f"across cross-functional engineering teams.{project_highlight} "
+                f"This background equips me to tackle distributed architecture, API latency, and operational excellence for {company}.\n\n"
+                f"I look forward to discussing how my engineering experience can contribute to the goals at {company}."
+            )
+            portal_bio = (
+                f"Software Engineer with production experience delivering scalable architectures, "
+                f"high-throughput backend services, and resilient systems. Specializing in modern engineering practices, "
+                f"with a proven track record delivering mission-critical applications."
+            )
+            portal_achievement = (
+                f"Spearheaded core engineering flows at {primary_comp}, delivering high-reliability services with zero data loss "
+                f"and robust automated validation."
+            )
+        else:
+            # Verified bullets from Abhishek Dwivedi's master profile
+            verified_bullets = [
+                "Architected a PAIN001 SWIFT CBPR+ payment ingestion pipeline handling up to 100K transactions per file via JMS and Spring Batch.",
+                "Migrated legacy IBAN account-opening flows to Kubernetes microservices using ActiveMQ and the Strangler Fig pattern for incremental brownfield migration.",
+                "Engineered Javassist dynamic proxies to runtime-switch datasources for downstream database writes without legacy WebLogic dependencies.",
+                "Engineered application-level multi-tenancy using ThreadLocal-based TenantContext and PostgreSQL Row-Level Security with zero cross-tenant leakage.",
+            ]
+
+            # Forward-looking problem-solving cover pitch (3 paragraphs, NO em-dashes, NO cliches)
+            cover_pitch = (
+                f"I am writing to express my strong interest in the {job_title} role at {company}. "
+                "My background centers on architecting resilient backend systems, microservices migrations, "
+                "and mission-critical payment processing pipelines in production environments.\n\n"
+                "At TCS BaNCS (PostFinance AG), I spearheaded the migration of legacy WebLogic architectures "
+                "to containerized Kubernetes services, engineered SOAP-to-REST translation layers, and built "
+                "high-throughput SWIFT ingestion pipelines processing up to 100K transactions per batch. "
+                "This experience enables me to directly tackle distributed systems challenges, API latency, "
+                f"and reliable database throughput for {company}'s backend services.\n\n"
+                f"I look forward to discussing how my experience with Spring Boot, Kubernetes, and distributed event architectures "
+                f"can contribute to the engineering goals at {company}."
+            )
+
+            portal_bio = (
+                f"Backend Software Engineer with production experience in distributed architectures, "
+                f"high-throughput payment pipelines, and microservices modernization. Specializing in Java, "
+                f"Spring Boot, Kubernetes, and PostgreSQL, with a proven track record delivering mission-critical "
+                f"financial flows and multi-tenant architectures."
+            )
+
+            portal_achievement = (
+                "Architected a PAIN001 SWIFT CBPR+ payment ingestion pipeline handling up to 100K transactions per file "
+                "at PostFinance AG. Implemented MD5 deduplication, XML schema validation, and Spring Batch processing, "
+                "ensuring zero data loss and automated rejection of invalid transaction requests."
+            )
 
         recruiter_outreach = (
             f"Hi, I noticed the {job_title} role at {company}. "

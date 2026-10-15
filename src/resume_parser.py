@@ -4,8 +4,10 @@ import logging
 import os
 import xml.etree.ElementTree as ET
 import zipfile
+import json
+import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -235,3 +237,296 @@ class ResumeParser:
                 cleaned_lines.append(line)
 
         return "\n".join(cleaned_lines).strip()
+
+    @classmethod
+    def extract_structured_profile(cls, raw_text: str, ai_gateway: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Transforms raw resume text into the canonical candidate_master_profile schema.
+        First attempts AI extraction via ai_gateway if provided;
+        falls back to deterministic regex and section heuristic parsing.
+        """
+        contacts = cls._extract_contacts(raw_text)
+
+        if ai_gateway:
+            try:
+                ai_profile = cls._extract_with_ai(raw_text, ai_gateway)
+                if ai_profile and isinstance(ai_profile, dict):
+                    for k, v in contacts.items():
+                        if not ai_profile.get(k) and v:
+                            ai_profile[k] = v
+                    return ai_profile
+            except Exception as e:
+                logger.warning(f"AI resume structuring failed, using deterministic parser: {e}")
+
+        return cls._extract_deterministic(raw_text, contacts)
+
+    @classmethod
+    def _extract_contacts(cls, text: str) -> Dict[str, str]:
+        """Extracts contact coordinates deterministically from text."""
+        result = {
+            "candidate_name": "",
+            "email": "",
+            "phone": "",
+            "linkedin_url": "",
+            "github_url": "",
+            "location": "",
+        }
+
+        # Email
+        email_m = re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text)
+        if email_m:
+            result["email"] = email_m.group(0)
+
+        # Phone
+        phone_m = re.search(r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{3,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b", text)
+        if phone_m:
+            val = phone_m.group(0).strip()
+            if sum(c.isdigit() for c in val) >= 10:
+                result["phone"] = val
+
+        # LinkedIn
+        li_m = re.search(r"(?:https?://)?(?:www\.)?linkedin\.com/in/([A-Za-z0-9_-]+)", text, re.IGNORECASE)
+        if li_m:
+            result["linkedin_url"] = f"https://linkedin.com/in/{li_m.group(1)}"
+
+        # GitHub
+        gh_m = re.search(r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_-]+)", text, re.IGNORECASE)
+        if gh_m:
+            result["github_url"] = f"https://github.com/{gh_m.group(1)}"
+
+        # Name: Scan first 5 lines
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in lines[:5]:
+            # Skip noise lines
+            if any(term in line.lower() for term in ["resume", "curriculum", "vitae", "page ", "@", "http", "phone"]):
+                continue
+            # If line is short and alphabetic, treat as name
+            clean_line = re.sub(r"[^A-Za-z\s.]", "", line).strip()
+            if 2 <= len(clean_line.split()) <= 4 and len(clean_line) <= 40:
+                result["candidate_name"] = clean_line
+                break
+
+        return result
+
+    @classmethod
+    def _extract_with_ai(cls, text: str, ai_gateway: Any) -> Optional[Dict[str, Any]]:
+        """Invokes AI Gateway to extract structured profile JSON from resume text."""
+        prompt = f"""You are a professional resume parser for an engineering career platform.
+Extract all candidate details from the resume text below into a clean JSON object.
+
+RESUME TEXT:
+{text[:8000]}
+
+SCHEMA REQUIREMENT (JSON only, no markdown, no em-dashes):
+{{
+  "candidate_name": "Full Name",
+  "phone": "Phone number or empty string",
+  "email": "Email address or empty string",
+  "location": "City, Country or empty string",
+  "linkedin_url": "LinkedIn URL or empty string",
+  "github_url": "GitHub URL or empty string",
+  "status": "Actively Looking",
+  "constraints": "Open to Remote",
+  "technical_skills": {{
+    "languages": ["Java", "Python", ...],
+    "frameworks": ["Spring Boot", "FastAPI", ...],
+    "databases": ["PostgreSQL", ...],
+    "devops_cloud": ["Docker", "Kubernetes", "AWS", ...],
+    "tools": ["Git", "Linux", ...]
+  }},
+  "work_history": [
+    {{
+      "company": "Company Name",
+      "role": "Job Title",
+      "period": "Start - End Date",
+      "location": "Location",
+      "bullets": ["Bullet 1", "Bullet 2"]
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "Project Name",
+      "tech_stack": "Technologies used",
+      "github_url": "URL if present",
+      "bullets": ["Bullet 1", "Bullet 2"]
+    }}
+  ],
+  "education": [
+    {{
+      "degree": "Degree",
+      "period": "Dates",
+      "institution": "University / College",
+      "topics": "Key Topics / Major"
+    }}
+  ],
+  "languages": [
+    {{
+      "language": "English",
+      "level": "Fluent",
+      "notes": ""
+    }}
+  ]
+}}
+"""
+        resp = ai_gateway.execute_generation(prompt, timeout_seconds=30.0)
+        raw_out = resp.get("text", "")
+        # Parse JSON
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_out, re.DOTALL)
+        if m:
+            return json.loads(m.group(1))
+        start = raw_out.find("{")
+        end = raw_out.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(raw_out[start : end + 1])
+        return None
+
+    @classmethod
+    def _extract_deterministic(cls, text: str, contacts: Dict[str, str]) -> Dict[str, Any]:
+        """Heuristic section parser for offline or zero-AI mode."""
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+        sections: Dict[str, List[str]] = {}
+        current_section = "header"
+        sections[current_section] = []
+
+        section_triggers = {
+            "skills": ["skills", "technical skills", "technologies", "core competencies"],
+            "experience": ["experience", "work experience", "employment history", "professional experience"],
+            "projects": ["projects", "personal projects", "academic projects", "key projects"],
+            "education": ["education", "academic background", "academics"],
+            "languages": ["languages", "spoken languages"],
+        }
+
+        for line in lines:
+            lower = line.lower().strip(":").strip()
+            matched = False
+            for sec_name, triggers in section_triggers.items():
+                if lower in triggers:
+                    current_section = sec_name
+                    if current_section not in sections:
+                        sections[current_section] = []
+                    matched = True
+                    break
+            if not matched:
+                sections.setdefault(current_section, []).append(line)
+
+        # Parse skills
+        skills: Dict[str, List[str]] = {
+            "languages": [],
+            "frameworks": [],
+            "databases": [],
+            "devops_cloud": [],
+            "tools": [],
+        }
+        for s_line in sections.get("skills", []):
+            parts = re.split(r"[:,]\s*", s_line)
+            cat = "tools"
+            low_p0 = parts[0].lower()
+            if "language" in low_p0:
+                cat = "languages"
+            elif "framework" in low_p0 or "library" in low_p0:
+                cat = "frameworks"
+            elif "database" in low_p0 or "data" in low_p0:
+                cat = "databases"
+            elif "cloud" in low_p0 or "devops" in low_p0 or "infra" in low_p0:
+                cat = "devops_cloud"
+            
+            items = [item.strip() for item in parts[1:] if item.strip()]
+            if not items and len(parts) > 1:
+                items = [parts[1].strip()]
+            if items:
+                skills[cat].extend(items)
+            else:
+                # Add individual words or comma-separated tokens
+                for tok in s_line.split(","):
+                    t = tok.strip()
+                    if t and len(t) < 30:
+                        skills["tools"].append(t)
+
+        # Parse projects
+        projects: List[Dict[str, Any]] = []
+        current_proj: Optional[Dict[str, Any]] = None
+        for p_line in sections.get("projects", []):
+            if p_line.startswith(("-", "*", "•")):
+                bullet = p_line.lstrip("-*• ").strip()
+                if current_proj:
+                    current_proj["bullets"].append(bullet)
+            else:
+                if current_proj and current_proj.get("name"):
+                    projects.append(current_proj)
+                # New project header
+                current_proj = {
+                    "name": p_line,
+                    "tech_stack": "",
+                    "github_url": "",
+                    "bullets": [],
+                }
+                # Check for tech stack in parentheses
+                ts_m = re.search(r"\((.*?)\)", p_line)
+                if ts_m:
+                    current_proj["tech_stack"] = ts_m.group(1)
+                    current_proj["name"] = p_line.replace(f"({ts_m.group(1)})", "").strip()
+
+        if current_proj and current_proj.get("name"):
+            projects.append(current_proj)
+
+        # Parse experience
+        work_history: List[Dict[str, Any]] = []
+        current_work: Optional[Dict[str, Any]] = None
+        for e_line in sections.get("experience", []):
+            if e_line.startswith(("-", "*", "•")):
+                bullet = e_line.lstrip("-*• ").strip()
+                if current_work:
+                    current_work["bullets"].append(bullet)
+            else:
+                # Possible role / company line
+                if current_work and current_work.get("company"):
+                    work_history.append(current_work)
+                current_work = {
+                    "company": e_line,
+                    "role": "Software Engineer",
+                    "period": "",
+                    "location": "",
+                    "bullets": [],
+                }
+                # Check for pipe or dash
+                if " | " in e_line:
+                    comp_parts = e_line.split(" | ")
+                    current_work["company"] = comp_parts[0].strip()
+                    if len(comp_parts) > 1:
+                        current_work["role"] = comp_parts[1].strip()
+                    if len(comp_parts) > 2:
+                        current_work["period"] = comp_parts[2].strip()
+
+        if current_work and current_work.get("company"):
+            work_history.append(current_work)
+
+        # Parse education
+        education: List[Dict[str, Any]] = []
+        for ed_line in sections.get("education", []):
+            if ed_line.startswith(("-", "*", "•")):
+                continue
+            education.append({
+                "degree": ed_line,
+                "period": "",
+                "institution": "",
+                "topics": "",
+            })
+
+        return {
+            "candidate_name": contacts.get("candidate_name") or "Candidate Name",
+            "phone": contacts.get("phone") or "",
+            "email": contacts.get("email") or "",
+            "location": contacts.get("location") or "City, Country",
+            "linkedin_url": contacts.get("linkedin_url") or "",
+            "github_url": contacts.get("github_url") or "",
+            "status": "Actively Looking",
+            "constraints": "Open to Remote",
+            "technical_skills": skills,
+            "work_history": work_history,
+            "projects": projects,
+            "education": education,
+            "languages": [{"language": "English", "level": "Fluent", "notes": ""}],
+            "master_latex_source": "",
+            "behavioral_profile_md": "",
+        }

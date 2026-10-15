@@ -59,10 +59,10 @@ class CandidateMasterProfileService:
                 row = cur.fetchone()
                 if row:
                     return dict(row)
-                return {}
+                return self.get_default_empty_profile()
         except Exception as e:
             logger.error(f"Failed to fetch active candidate profile: {e}")
-            return {}
+            return self.get_default_empty_profile()
         finally:
             if conn and not getattr(conn, "closed", True):
                 try:
@@ -70,9 +70,37 @@ class CandidateMasterProfileService:
                 except Exception:
                     pass
 
+    def get_default_empty_profile(self) -> Dict[str, Any]:
+        """Provides default empty structure for a new candidate profile."""
+        return {
+            "id": None,
+            "candidate_name": "",
+            "location": "",
+            "phone": "",
+            "email": "",
+            "linkedin_url": "",
+            "github_url": "",
+            "status": "Actively Looking",
+            "constraints": "Open to Remote",
+            "languages": [],
+            "education": [],
+            "work_history": [],
+            "projects": [],
+            "technical_skills": {
+                "languages": [],
+                "frameworks": [],
+                "databases": [],
+                "devops_cloud": [],
+                "tools": [],
+            },
+            "master_latex_source": "",
+            "behavioral_profile_md": "",
+            "is_active": True,
+        }
+
     def update_profile(self, profile_data: Dict[str, Any]) -> bool:
         """
-        Updates the active candidate master profile.
+        Updates the active candidate master profile, or inserts one if none exists.
         """
         conn = None
         try:
@@ -116,8 +144,36 @@ class CandidateMasterProfileService:
                             json.dumps(profile_data.get("technical_skills", {})),
                             profile_data.get("master_latex_source", ""),
                             profile_data.get("behavioral_profile_md", ""),
-                        )
+                        ),
                     )
+                    if cur.rowcount == 0:
+                        cur.execute(
+                            """
+                            INSERT INTO candidate_master_profile (
+                                candidate_name, location, phone, email, linkedin_url,
+                                github_url, status, constraints, languages, education,
+                                work_history, projects, technical_skills, master_latex_source,
+                                behavioral_profile_md, is_active, created_at, updated_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, NOW(), NOW());
+                            """,
+                            (
+                                profile_data.get("candidate_name", ""),
+                                profile_data.get("location", ""),
+                                profile_data.get("phone", ""),
+                                profile_data.get("email", ""),
+                                profile_data.get("linkedin_url", ""),
+                                profile_data.get("github_url", ""),
+                                profile_data.get("status", "Actively Looking"),
+                                profile_data.get("constraints", ""),
+                                json.dumps(profile_data.get("languages", [])),
+                                json.dumps(profile_data.get("education", [])),
+                                json.dumps(profile_data.get("work_history", [])),
+                                json.dumps(profile_data.get("projects", [])),
+                                json.dumps(profile_data.get("technical_skills", {})),
+                                profile_data.get("master_latex_source", ""),
+                                profile_data.get("behavioral_profile_md", ""),
+                            ),
+                        )
                     conn.commit()
             return True
         except Exception as e:
@@ -146,14 +202,14 @@ class CandidateMasterProfileService:
             "# Candidate Profile",
             "",
             "## Identity",
-            f"- **Name:** {p.get('candidate_name', 'Abhishek Dwivedi')}",
-            f"- **Location:** {p.get('location', 'Bangalore, India')}",
+            f"- **Name:** {p.get('candidate_name', 'Candidate Name')}",
+            f"- **Location:** {p.get('location', 'City, Country')}",
             f"- **Phone:** {phone_val}",
             f"- **Email:** {email_val}",
             f"- **LinkedIn:** {p.get('linkedin_url', '')}",
             f"- **GitHub:** {p.get('github_url', '')}",
             f"- **Status:** {p.get('status', 'Actively Looking')}",
-            f"- **Constraints:** {p.get('constraints', 'Open to Remote / Bangalore')}",
+            f"- **Constraints:** {p.get('constraints', 'Open to Remote / Relocation')}",
             "",
             "### Languages",
             "| Language | Level | Notes |",
