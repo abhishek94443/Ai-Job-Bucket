@@ -30,10 +30,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy Backend Source Code & Data
 COPY src/ ./src/
-COPY data/ ./data/
+RUN mkdir -p /app/data
 COPY schema.sql ./schema.sql
 COPY scripts/start-render.sh /app/start.sh
-RUN chmod +x /app/start.sh
+RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
 # Copy Frontend Build Artifacts & Node Modules
 WORKDIR /app/frontend
