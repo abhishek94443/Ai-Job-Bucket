@@ -14,6 +14,16 @@ for i in {1..30}; do
   sleep 1
 done
 
+# Verify openings-mcp executable availability
+echo "Verifying MCP discovery binary..."
+if command -v openings-mcp >/dev/null 2>&1; then
+  echo "MCP binary verified at $(command -v openings-mcp)"
+elif [ -f /app/mcp_servers/openings-mcp/bin/openings-mcp-linux-amd64 ]; then
+  echo "MCP binary verified at /app/mcp_servers/openings-mcp/bin/openings-mcp-linux-amd64"
+else
+  echo "WARNING: openings-mcp executable not found in path or in-tree!"
+fi
+
 echo "Starting Next.js frontend on public PORT ${PORT:-3000}..."
 cd /app/frontend
 exec npx next start -p "${PORT:-3000}" -H 0.0.0.0

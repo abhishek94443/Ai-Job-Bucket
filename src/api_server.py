@@ -129,10 +129,21 @@ class ReorderModelsRequest(BaseModel):
 
 @app.get("/api/health")
 def health_check():
+    import shutil
+    from src.mcp_client import resolve_openings_mcp_path
+    try:
+        mcp_path = resolve_openings_mcp_path()
+        mcp_exists = os.path.isfile(mcp_path) or bool(shutil.which(mcp_path))
+    except Exception as exc:
+        mcp_path = str(exc)
+        mcp_exists = False
+
     return {
         "status": "healthy",
         "engine": "Job Bucket Headless API",
         "version": "2.0.0",
+        "mcp_executable": mcp_path,
+        "mcp_ready": mcp_exists,
     }
 
 

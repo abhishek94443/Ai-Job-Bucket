@@ -17,11 +17,12 @@ RUN npm run build
 FROM python:3.11-slim AS runner
 WORKDIR /app
 
-# Install system dependencies (Node.js runtime, curl for healthchecks)
+# Install system dependencies (Node.js runtime, curl for healthchecks, ca-certificates for MCP SSL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python backend dependencies
@@ -34,6 +35,13 @@ RUN mkdir -p /app/data
 COPY schema.sql ./schema.sql
 COPY scripts/start-render.sh /app/start.sh
 RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
+
+# Copy MCP Servers & Precompiled Discovery Binaries
+COPY mcp_servers/ ./mcp_servers/
+RUN chmod +x /app/mcp_servers/openings-mcp/bin/* 2>/dev/null || true && \
+    if [ -f /app/mcp_servers/openings-mcp/bin/openings-mcp-linux-amd64 ]; then \
+      ln -sf /app/mcp_servers/openings-mcp/bin/openings-mcp-linux-amd64 /usr/local/bin/openings-mcp; \
+    fi
 
 # Copy Frontend Build Artifacts & Node Modules
 WORKDIR /app/frontend
