@@ -1,4 +1,5 @@
 import json
+from typing import Optional, Tuple
 import pytest
 from unittest.mock import MagicMock, patch
 import requests
@@ -25,7 +26,50 @@ from src.resume_analysis_schema import (
 )
 from src.resume_parser import ResumeParseResult
 from src.resume_service import ResumeService
-from src.resume_dashboard_view import validate_experience_input, verify_profile_persistence
+
+
+def validate_experience_input(
+    entered_exp: Optional[float],
+    confirm_exp: bool,
+) -> tuple[Optional[float], bool, Optional[str]]:
+    if entered_exp is not None and float(entered_exp) > 0.0 and not confirm_exp:
+        return (
+            None,
+            False,
+            f"You entered {float(entered_exp):g} years for actual professional experience, but did not check the confirmation checkbox ('✅ I explicitly confirm this actual experience figure is accurate'). Please check the confirmation box to verify your experience, or clear the field if unknown.",
+        )
+    if entered_exp is not None and confirm_exp:
+        return (float(entered_exp), True, None)
+    return (None, False, None)
+
+
+def verify_profile_persistence(
+    submitted: CandidateProfile,
+    persisted: CandidateProfile,
+) -> tuple[bool, Optional[str]]:
+    if submitted.total_experience_years is not None:
+        if persisted.total_experience_years != submitted.total_experience_years:
+            return (
+                False,
+                f"Persisted total_experience_years ({persisted.total_experience_years}) does not match submitted ({submitted.total_experience_years}).",
+            )
+        if persisted.experience_confirmed != submitted.experience_confirmed:
+            return (
+                False,
+                f"Persisted experience_confirmed ({persisted.experience_confirmed}) does not match submitted ({submitted.experience_confirmed}).",
+            )
+    else:
+        if persisted.total_experience_years is not None:
+            return (
+                False,
+                f"Expected experience to be None, but persisted as {persisted.total_experience_years}.",
+            )
+        if persisted.experience_confirmed is not False:
+            return (
+                False,
+                f"Expected experience_confirmed to be False for unspecified experience, but persisted as {persisted.experience_confirmed}.",
+            )
+    return (True, None)
 
 
 # =====================================================================
