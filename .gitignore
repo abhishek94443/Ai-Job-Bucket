@@ -34,6 +34,8 @@ scratch/
 # Internal execution traces and agent files
 docs/live_2_agent_execution_trace.md
 docs/pipeline_architecture_and_ai_integration_plan.md
+docs/marketanalysis.md
+docs/pipeline_staging_and_enrichment_guide.md
 frontend/AGENTS.md
 
 # Frontend dependencies & build artifacts

@@ -1,13 +1,13 @@
-# Job Bucket
+# Ai-Job-Bucket
 
-Job Bucket is an automated job discovery, multi-tier evaluation, and application tailoring platform designed for software engineers. It unifies opportunity discovery across major job boards and tens of thousands of direct company applicant tracking systems (ATS), scores opportunities using two-tier deterministic and semantic evaluation, and produces verified, ATS-compliant resumes using a 2-agent drafting and reviewing engine.
+Ai-Job-Bucket is an automated job discovery, multi-tier evaluation, and application tailoring platform designed for software engineers. It unifies opportunity discovery across major career platforms and tens of thousands of direct company applicant tracking systems (ATS), scores opportunities using two-tier deterministic and semantic evaluation, and produces verified, ATS-compliant resumes using a 2-agent drafting and reviewing engine.
 
 ---
 
 ## Documentation Links
 
-* [System Architecture Guide](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/architecture.md): In-depth breakdown of backend services, database schema, AI Gateway quota governance, and container topology.
-* [Request and Data Flow Guide](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/flow.md): Step-by-step sequence diagrams covering discovery, batch enrichment, CRM tracking, resume tailoring, and model failovers.
+* [System Architecture Guide](docs/architecture.md): In-depth breakdown of backend services, database schema, AI Gateway quota governance, and container topology.
+* [Request and Data Flow Guide](docs/flow.md): Step-by-step sequence diagrams covering discovery, batch enrichment, CRM tracking, resume tailoring, and model failovers.
 
 ---
 
@@ -49,7 +49,7 @@ Job Bucket is an automated job discovery, multi-tier evaluation, and application
 [ Job Boards & Company Portals ]
                │
                ▼
-[ Job Bucket Discovery Engine (MCP) ]
+[ Ai-Job-Bucket Discovery Engine (MCP) ]
                │
                ▼
 [ Normalizer & Deduplicator ] ──► [ Deterministic Scorer ] ──► [ Staged Queue ]
@@ -61,7 +61,7 @@ Job Bucket is an automated job discovery, multi-tier evaluation, and application
 [ 2-Agent Tailoring Drawer ] ──► [ LaTeX PDF Compiler ] ◄── [ AI Gateway ]
 ```
 
-For full architectural details, see [architecture.md](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/architecture.md).
+For full architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -80,7 +80,7 @@ For full architectural details, see [architecture.md](file:///c:/Users/Lenovo/De
 
 ```bash
 git clone https://github.com/abhishek94443/Ai-Job-Bucket.git
-cd job-bucket
+cd Ai-Job-Bucket
 ```
 
 ### 2. Set Up the Python Backend
@@ -117,7 +117,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ### 5. Initialize Database Schema
 
-Execute the initialization script to create tables, indexes, custom enums, and register default AI models:
+Execute the initialization script to verify database connectivity, wake up serverless instances, create tables, indexes, custom enums, and register default AI models:
 
 ```bash
 python scripts/init_db.py
@@ -165,13 +165,13 @@ npm run build
 
 ## Deployment Topology
 
-Job Bucket is packaged as a production-grade multi-stage [Dockerfile](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/Dockerfile) ready for single-container cloud hosting (such as Render):
+Ai-Job-Bucket is packaged as a production-grade multi-stage [Dockerfile](Dockerfile) ready for single-container cloud hosting (such as Render):
 
 * **Stage 1 (Frontend Builder):** Compiles the Next.js application into production artifacts.
-* **Stage 2 (Runtime Container):** Sets up Python dependencies, verifies the native discovery engine binary, boots the FastAPI backend on internal port 8000, and starts the Next.js web server on public port 3000 via [scripts/start-render.sh](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/scripts/start-render.sh).
+* **Stage 2 (Runtime Container):** Sets up Python dependencies, verifies the native discovery engine binary, boots the FastAPI backend on internal port 8000, and starts the Next.js web server on public port 3000 via [scripts/start-render.sh](scripts/start-render.sh).
 
 ---
 
 ## License
 
-This project is open-source software licensed under the MIT License. See [LICENSE](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/LICENSE) for details.
+This project is open-source software licensed under the MIT License. See [LICENSE](LICENSE) for details.
