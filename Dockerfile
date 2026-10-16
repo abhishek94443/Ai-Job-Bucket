@@ -33,6 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 RUN mkdir -p /app/data
 COPY schema.sql ./schema.sql
+COPY scripts/ ./scripts/
 COPY scripts/start-render.sh /app/start.sh
 RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
