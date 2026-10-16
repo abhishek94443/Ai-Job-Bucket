@@ -1,46 +1,76 @@
 # Job Bucket
 
-Job Bucket is an open-source, automated job discovery and application tailoring platform. It continuously discovers software engineering postings across job boards and company applicant tracking systems (ATS), scores relevance using multi-tier deterministic and AI evaluation, and generates ATS-optimized resumes and cover letters using a 2-agent drafting and reviewing engine.
+Job Bucket is an automated job discovery, multi-tier evaluation, and application tailoring platform designed for software engineers. It unifies opportunity discovery across major job boards and tens of thousands of direct company applicant tracking systems (ATS), scores opportunities using two-tier deterministic and semantic evaluation, and produces verified, ATS-compliant resumes using a 2-agent drafting and reviewing engine.
 
 ---
 
-## Key Features
+## Documentation Links
 
-- **Multi-Source Job Discovery**: Ingests postings from LinkedIn, Indeed, freehire, and 41,000+ direct company ATS portals (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, etc.) via a vendored Model Context Protocol (MCP) server with precompiled binaries for Windows, Linux, and macOS.
-- **Two-Tier Evaluation Pipeline**:
-  - **Tier 1 (Deterministic)**: Fast normalization, MD5 canonical deduplication, and rule-based relevance scoring for instant dashboard previews.
-  - **Tier 2 (AI Enrichment)**: Asynchronous semantic gap analysis and behavioral alignment via Google Gemini models with rate-limit waterfall routing.
-- **2-Agent Tailoring Engine**:
-  - **Agent 1 (Drafter)**: Analyzes job descriptions against candidate profiles to craft tailored LaTeX resumes and concise recruiter outreach notes.
-  - **Agent 2 (Reviewer)**: Enforces strict grounding checks to prevent hallucinated experience and runs automated ATS compliance audits (100/100 score target).
-- **Application Tracking (CRM)**: Tracks applications through lifecycle stages (`DISCOVERED`, `SHORTLISTED`, `APPLIED`, `INTERVIEWING`, `OFFER`, `REJECTED`).
-- **Modern Next.js Workbench**: Responsive dashboard with real-time drawer preview, full job description viewer, and direct PDF downloads.
+* [System Architecture Guide](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/architecture.md): In-depth breakdown of backend services, database schema, AI Gateway quota governance, and container topology.
+* [Request and Data Flow Guide](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/flow.md): Step-by-step sequence diagrams covering discovery, batch enrichment, CRM tracking, resume tailoring, and model failovers.
 
 ---
 
-## Architecture Overview
+## Key System Capabilities
+
+### 1. Unified Multi-Platform Job Discovery
+* Ingests listings across public career platforms and direct company ATS portals (Workday, Greenhouse, Lever, Ashby, SmartRecruiters) using an internal Model Context Protocol (MCP) discovery engine.
+* Native precompiled binaries for Linux, macOS, and Windows handle upstream discovery without browser automation overhead.
+* Normalizes disparate fields into uniform, type-safe data structures.
+
+### 2. Canonical Normalization and Deduplication
+* Strips marketing parameters (`utm_*`, `refId`, session IDs) to generate canonical listing URLs.
+* Calculates an MD5 fingerprint from `(platform, canonical_job_id, company, title)` to ensure zero duplicate entries across repetitive search cycles.
+
+### 3. Two-Tier Scoring Pipeline
+* **Tier 1 (Deterministic Evaluation):** Fast keyword matching, technology stack filtering, target location matching, and experience boundary checks run immediately on ingestion.
+* **Tier 2 (AI Enrichment Worker):** Asynchronous workers pull staged opportunities using PostgreSQL row-level locks (`FOR UPDATE SKIP LOCKED`), pack multiple opportunities per call, and evaluate tech stack fit, skill gaps, and hidden requirements.
+
+### 4. 2-Agent Resume Tailoring Engine
+* **Agent 1 (The Drafter):** Analyzes job requirements against candidate master profile facts to draft targeted LaTeX resume bullets, an executive summary, and custom recruiter outreach messages.
+* **Agent 2 (The Reviewer & Grounding Auditor):** Checks every generated bullet point against verified candidate profile facts to prevent hallucinated accomplishments, enforcing strict factual grounding and calculating an automated ATS compliance score.
+
+### 5. Multi-Provider AI Gateway & Quota Governance
+* Decoupled architecture supporting Google Gemini, OpenAI, Groq, Anthropic, and local Ollama models.
+* Dynamic priority ordering, automated rate-limit detection, and transparent waterfall failover when a model reaches RPM, TPM, or daily quota ceilings.
+
+### 6. Application Lifecycle CRM Tracker
+* Kanban-style pipeline tracking across stages: `DISCOVERED`, `SHORTLISTED`, `APPLIED`, `INTERVIEWING`, `OFFER`, `REJECTED`, `WITHDRAWN`, and `STALE`.
+* Tracks status transition timestamps, application submission dates, recruiter contacts, and personal interview notes.
+
+### 7. Modern Decoupled Workbench
+* Responsive Next.js frontend with split-pane drawer navigation, real-time filtering, full job description preview, candidate master facts manager, and model quota controls.
+
+---
+
+## High-Level Architecture
 
 ```text
-[ Job Discovery ] ──► [ Deduplicator ] ──► [ Browser Validator ] ──► [ Deterministic Ingestion ]
-        │                                                                     │
-        ▼                                                                     ▼
- [ Freehire / LI / Indeed ]                                           [ Relevance Scorer ]
-                                                                               │
-                                                                               ▼
-[ Next.js UI Drawer ] ◄── [ FastAPI Server ] ◄── [ PostgreSQL DB ] ◄── [ Staged Pipeline ]
-        │                                                                     │
-        ▼                                                                     ▼
-[ 2-Agent Tailoring ] ──► [ PDF Compiler ] ◄── [ AI Gateway ] ◄─────── [ Concurrent Workers ]
+[ Job Boards & Company Portals ]
+               │
+               ▼
+[ Job Bucket Discovery Engine (MCP) ]
+               │
+               ▼
+[ Normalizer & Deduplicator ] ──► [ Deterministic Scorer ] ──► [ Staged Queue ]
+                                                                      │
+                                                                      ▼
+[ Next.js Workbench ] ◄── [ FastAPI Backend ] ◄── [ PostgreSQL ] ◄── [ AI Worker ]
+         │                                                            │
+         ▼                                                            ▼
+[ 2-Agent Tailoring Drawer ] ──► [ LaTeX PDF Compiler ] ◄── [ AI Gateway ]
 ```
+
+For full architectural details, see [architecture.md](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/architecture.md).
 
 ---
 
 ## Prerequisites
 
-- **Python**: 3.10 or higher
-- **Node.js**: 18.x or higher
-- **PostgreSQL**: 15 or higher (Local instance or cloud-hosted such as Neon)
-- **Google Gemini API Key**: For AI matching and tailoring features (free-tier keys supported)
+* **Python:** 3.10 or higher
+* **Node.js:** 18.x or higher (Node 20 recommended)
+* **PostgreSQL:** 15 or higher (Local installation or cloud-hosted database such as Neon)
+* **LLM API Key:** Google Gemini, OpenAI, or Groq API key for AI enrichment and tailoring features
 
 ---
 
@@ -49,7 +79,7 @@ Job Bucket is an open-source, automated job discovery and application tailoring 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/job-bucket.git
+git clone https://github.com/abhishek94443/Ai-Job-Bucket.git
 cd job-bucket
 ```
 
@@ -59,7 +89,7 @@ cd job-bucket
 # Create and activate a virtual environment
 python -m venv venv
 
-# Windows:
+# Windows (PowerShell):
 .\venv\Scripts\activate
 # Linux/macOS:
 source venv/bin/activate
@@ -78,69 +108,53 @@ cd ..
 
 ### 4. Configure Environment Variables
 
-Copy the example environment configuration:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set your database connection string and Gemini API key:
+Create a `.env` file in the repository root:
 
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/job_bucket
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-### 5. Initialize the Database
+### 5. Initialize Database Schema
 
-Run the database initialization script to create all tables, enums, constraints, indexes, and seed AI models in a single operation:
+Execute the initialization script to create tables, indexes, custom enums, and register default AI models:
 
 ```bash
 python scripts/init_db.py
 ```
 
-### 6. Start the Application
+### 6. Start Development Servers
 
-In terminal 1 (Backend API):
+In terminal 1 (FastAPI Backend):
 ```bash
 uvicorn src.api_server:app --port 8000 --reload
 ```
 
-In terminal 2 (Frontend Dashboard):
+In terminal 2 (Next.js Frontend):
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open your browser to:
-- **Dashboard UI**: `http://localhost:3000`
-- **Backend API Docs**: `http://localhost:8000/docs`
-- **Health Check**: `http://localhost:8000/api/health`
+* Frontend Workbench: `http://localhost:3000`
+* Backend API Documentation: `http://localhost:8000/docs`
+* Health Check Endpoint: `http://localhost:8000/api/health`
 
 ---
 
-## Multi-Platform Discovery Engine
+## Test Suite Execution
 
-Job Bucket vendors the open-source `openings-mcp` service under `mcp_servers/openings-mcp/` and includes precompiled binaries for multiple platforms in `mcp_servers/openings-mcp/bin/`:
-
-- `openings-mcp-windows-amd64.exe` (Windows x64)
-- `openings-mcp-linux-amd64` (Linux x86_64)
-- `openings-mcp-darwin-arm64` (macOS Apple Silicon)
-- `openings-mcp-darwin-amd64` (macOS Intel)
-
-The backend automatically detects the host operating system and executes the correct binary with zero external Go setup required.
-
----
-
-## Running Tests
-
-Execute the full pytest test suite:
+The repository contains an automated test suite verifying all active ingestion, scoring, AI gateway, CRM tracking, and tailoring modules:
 
 ```bash
+# Run the full test suite
 pytest tests/
+
+# Run a specific module test suite
+pytest tests/test_api_server_tracking.py -v
 ```
 
-Build and validate the frontend production bundle:
+Validate frontend production compilation:
 
 ```bash
 cd frontend
@@ -149,6 +163,15 @@ npm run build
 
 ---
 
+## Deployment Topology
+
+Job Bucket is packaged as a production-grade multi-stage [Dockerfile](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/Dockerfile) ready for single-container cloud hosting (such as Render):
+
+* **Stage 1 (Frontend Builder):** Compiles the Next.js application into production artifacts.
+* **Stage 2 (Runtime Container):** Sets up Python dependencies, verifies the native discovery engine binary, boots the FastAPI backend on internal port 8000, and starts the Next.js web server on public port 3000 via [scripts/start-render.sh](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/scripts/start-render.sh).
+
+---
+
 ## License
 
-This project is licensed under the MIT License. See [mcp_servers/openings-mcp/LICENSE](mcp_servers/openings-mcp/LICENSE) for the vendored discovery engine license.
+This project is open-source software licensed under the MIT License. See [LICENSE](file:///c:/Users/Lenovo/Desktop/abhishe/AI/job-bucket/LICENSE) for details.
