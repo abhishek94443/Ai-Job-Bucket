@@ -5,6 +5,7 @@ Safe to run multiple times (idempotent DDL).
 """
 
 import sys
+import time
 from pathlib import Path
 
 # Add project root to sys.path
@@ -16,18 +17,31 @@ from src.db_persistence import DatabasePersistence
 
 def main():
     print("=" * 60)
-    print("Job Bucket: Database Initialization")
+    print("Job Bucket: Database Initialization & Health Verification")
     print("=" * 60)
 
     db = DatabasePersistence()
-    healthy, msg = db.check_health()
+    max_attempts = 10
+    delay_seconds = 5
+    connected = False
+    last_error = ""
 
-    if not healthy:
-        print(f"Error: Unable to connect to database: {msg}")
+    print(f"Connecting to database (polling up to {max_attempts} attempts, {delay_seconds}s intervals for cold starts)...")
+    for attempt in range(1, max_attempts + 1):
+        healthy, msg = db.check_health()
+        if healthy:
+            print(f"Connected to database on attempt {attempt}/{max_attempts}: {msg}")
+            connected = True
+            break
+        last_error = msg
+        print(f"Attempt {attempt}/{max_attempts} failed: {msg}. Retrying in {delay_seconds}s...")
+        if attempt < max_attempts:
+            time.sleep(delay_seconds)
+
+    if not connected:
+        print(f"Error: Unable to connect to database after {max_attempts * delay_seconds}s: {last_error}")
         print("Please verify your DATABASE_URL in .env.")
         sys.exit(1)
-
-    print(f"Connected to database: {msg}")
     print("Executing schema.sql...")
 
     schema_file = PROJECT_ROOT / "schema.sql"

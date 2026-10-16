@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+echo "Verifying database connectivity and applying idempotent schema..."
+python scripts/init_db.py
+
 echo "Starting FastAPI backend on internal port 8000..."
 python -m uvicorn src.api_server:app --host 127.0.0.1 --port 8000 &
 FASTAPI_PID=$!
