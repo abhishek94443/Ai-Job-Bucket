@@ -11,6 +11,25 @@ jobs:
     name: Backend Test Suite (Python 3.11)
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: job_bucket_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://test_user:test_password@localhost:5432/job_bucket_test
+      GEMINI_API_KEY: ci_mock_gemini_key_for_testing
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -25,6 +44,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Initialize Test Database Schema
+        run: |
+          python scripts/init_db.py
 
       - name: Run Pytest Suite
         run: |
