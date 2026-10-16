@@ -169,11 +169,17 @@ def get_jobs(
         # If legacy limit provided without explicit page_size, adapt page_size
         effective_page_size = limit if (limit and limit > 0 and page_size == 20) else page_size
 
+        # Normalize user status filter (e.g. Saved -> SHORTLISTED)
+        filter_status = None
+        if status and status != "ALL":
+            s_clean = status.strip().upper()
+            filter_status = "SHORTLISTED" if s_clean == "SAVED" else s_clean
+
         rows, total_count = query_svc.search_jobs(
             search_term=search,
             platform=portal,
             min_score=min_score,
-            user_status=status if (status and status != "ALL") else None,
+            user_status=filter_status,
             posted_within=posted_within,
             fetched_within=fetched_within,
             sort_by=sort_by or "ai_score",
@@ -238,10 +244,23 @@ def track_job(job_id: int, req: TrackJobRequest):
     try:
         from src.db_persistence import DatabasePersistence
         db_p = DatabasePersistence()
-        success = db_p.update_job_status(job_id, req.status, notes=req.notes)
+        
+        status_clean = (req.status or "").strip().upper()
+        status_map = {
+            "SAVED": "SHORTLISTED",
+        }
+        target_status = status_map.get(status_clean, status_clean)
+
+        success = db_p.update_job_user_status(
+            job_id=job_id,
+            user_status=target_status,
+            user_notes=req.notes,
+        )
         if not success:
             raise HTTPException(status_code=400, detail="Failed to update job tracking status")
-        return {"status": "success", "job_id": job_id, "new_status": req.status}
+        return {"status": "success", "job_id": job_id, "new_status": target_status}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Track job failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
